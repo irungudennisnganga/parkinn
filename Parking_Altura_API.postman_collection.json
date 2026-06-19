@@ -1,0 +1,513 @@
+{
+  "info": {
+    "name": "Parking Altura API",
+    "description": "Internal API for the Parking Altura HikCentral integration service.\n\n**Endpoints:**\n- Health check\n- ANPR event receiver (webhook from HikCentral)\n- Vehicle registration & lookup\n- HikCentral resource sync\n- M-Pesa payment callback",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "parking-altura"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "plate",
+      "value": "KCA 123A",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "GET /health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is ok', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().status).to.eql('ok');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            }
+          },
+          "response": [
+            {
+              "name": "Success",
+              "status": "OK",
+              "code": 200,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "body": "{\n  \"status\": \"ok\",\n  \"timestamp\": \"2026-06-16T12:00:00.000Z\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Events",
+      "item": [
+        {
+          "name": "POST /eventsRCV — ANPR Vehicle Detected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Returns ack', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().code).to.eql(0);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventData\": {\n    \"eventType\": \"ANPR_VEHICLE_DETECTED\",\n    \"eventTime\": \"2026-06-16T12:30:00Z\",\n    \"plateNumber\": \"{{plate}}\",\n    \"cameraId\": \"camera-uuid-001\",\n    \"cameraName\": \"Floor 1 Entry\",\n    \"direction\": \"entry\"\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/eventsRCV",
+              "host": ["{{baseUrl}}"],
+              "path": ["eventsRCV"]
+            }
+          }
+        },
+        {
+          "name": "POST /eventsRCV — Unknown Vehicle Entry",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Unknown entry accepted', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventData\": {\n    \"eventType\": \"ANPR_VEHICLE_DETECTED\",\n    \"eventTime\": \"2026-06-16T13:00:00Z\",\n    \"plateNumber\": \"KXX 999Z\",\n    \"cameraId\": \"camera-uuid-001\",\n    \"cameraName\": \"Floor 1 Entry\",\n    \"direction\": \"entry\"\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/eventsRCV",
+              "host": ["{{baseUrl}}"],
+              "path": ["eventsRCV"]
+            }
+          }
+        },
+        {
+          "name": "POST /eventsRCV — Unknown Vehicle Exit (Unpaid)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Exit processed (unpaid)', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventData\": {\n    \"eventType\": \"ANPR_VEHICLE_DETECTED\",\n    \"eventTime\": \"2026-06-16T17:30:00Z\",\n    \"plateNumber\": \"KXX 999Z\",\n    \"cameraId\": \"camera-uuid-002\",\n    \"cameraName\": \"Floor 1 Exit\",\n    \"direction\": \"exit\"\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/eventsRCV",
+              "host": ["{{baseUrl}}"],
+              "path": ["eventsRCV"]
+            }
+          }
+        },
+        {
+          "name": "POST /eventsRCV — Known Vehicle Entry (Floor 5)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Known vehicle entry accepted', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventData\": {\n    \"eventType\": \"ANPR_VEHICLE_DETECTED\",\n    \"eventTime\": \"2026-06-16T14:00:00Z\",\n    \"plateNumber\": \"{{plate}}\",\n    \"cameraId\": \"camera-uuid-005\",\n    \"cameraName\": \"Floor 5 Entry\",\n    \"direction\": \"entry\"\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/eventsRCV",
+              "host": ["{{baseUrl}}"],
+              "path": ["eventsRCV"]
+            }
+          }
+        },
+        {
+          "name": "POST /eventsRCV — Unknown Vehicle Blocked at Floor 5",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Unknown vehicle blocked at residential entry', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventData\": {\n    \"eventType\": \"ANPR_VEHICLE_DETECTED\",\n    \"eventTime\": \"2026-06-16T15:00:00Z\",\n    \"plateNumber\": \"UNKNOWN 123\",\n    \"cameraId\": \"camera-uuid-005\",\n    \"cameraName\": \"Floor 5 Entry\",\n    \"direction\": \"entry\"\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/eventsRCV",
+              "host": ["{{baseUrl}}"],
+              "path": ["eventsRCV"]
+            }
+          }
+        },
+        {
+          "name": "POST /eventsRCV — HikCentral Array Format",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Array format processed', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"events\": [\n    {\n      \"eventData\": {\n        \"eventType\": \"ANPR_VEHICLE_DETECTED\",\n        \"eventTime\": \"2026-06-16T16:00:00Z\",\n        \"plateNumber\": \"KYY 456B\",\n        \"cameraId\": \"camera-uuid-001\",\n        \"cameraName\": \"Floor 1 Entry\",\n        \"direction\": \"entry\"\n      }\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/eventsRCV",
+              "host": ["{{baseUrl}}"],
+              "path": ["eventsRCV"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Vehicles",
+      "item": [
+        {
+          "name": "POST /vehicles/register — Register Known Vehicle",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Vehicle registered', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  pm.expect(pm.response.json().plate).to.eql('KCA 123A');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"plate\": \"KCA 123A\",\n  \"ownerName\": \"John Doe\",\n  \"unitNumber\": \"5B\",\n  \"phoneNumber\": \"254712345678\",\n  \"floorAccess\": [1, 2, 3, 4, 5, 6, 7, 8, 9]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/vehicles/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["vehicles", "register"]
+            }
+          }
+        },
+        {
+          "name": "GET /vehicles/:plate — Lookup Vehicle",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Vehicle found', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().vehicle.plate).to.eql('KCA 123A');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/vehicles/{{plate}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["vehicles", "{{plate}}"]
+            }
+          }
+        },
+        {
+          "name": "GET /vehicles/:plate — Not Found",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Returns 404', () => {",
+                  "  pm.response.to.have.status(404);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/vehicles/NONEXISTENT",
+              "host": ["{{baseUrl}}"],
+              "path": ["vehicles", "NONEXISTENT"]
+            }
+          }
+        },
+        {
+          "name": "GET /vehicles/active — Active Sessions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Returns active sessions list', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().sessions).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/vehicles/active",
+              "host": ["{{baseUrl}}"],
+              "path": ["vehicles", "active"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin / Sync",
+      "item": [
+        {
+          "name": "POST /sync/resources — Trigger HikCentral Sync",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Sync triggered', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().success).to.eql(true);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/sync/resources",
+              "host": ["{{baseUrl}}"],
+              "path": ["sync", "resources"]
+            }
+          }
+        },
+        {
+          "name": "GET /sync/status — Sync Status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Sync status returned', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().areas).to.be.a('number');",
+                  "  pm.expect(pm.response.json().cameras).to.be.a('number');",
+                  "  pm.expect(pm.response.json().barriers).to.be.a('number');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/sync/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["sync", "status"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "M-Pesa",
+      "item": [
+        {
+          "name": "POST /mpesa/callback — Successful Payment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Callback acknowledged', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().ResultCode).to.eql(0);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"Body\": {\n    \"stkCallback\": {\n      \"MerchantRequestID\": \"1234-5678-9012\",\n      \"CheckoutRequestID\": \"ws_CO_16062026123000000\",\n      \"ResultCode\": 0,\n      \"ResultDesc\": \"The service request is processed successfully.\",\n      \"CallbackMetadata\": {\n        \"Item\": [\n          { \"Name\": \"Amount\", \"Value\": 100.0 },\n          { \"Name\": \"MpesaReceiptNumber\", \"Value\": \"NLA1234567\" },\n          { \"Name\": \"TransactionDate\", \"Value\": 20260616123000 },\n          { \"Name\": \"PhoneNumber\", \"Value\": 254712345678 }\n        ]\n      },\n      \"AccountReference\": \"KXX 999Z\"\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/mpesa/callback",
+              "host": ["{{baseUrl}}"],
+              "path": ["mpesa", "callback"]
+            }
+          }
+        },
+        {
+          "name": "POST /mpesa/callback — Failed Payment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Failed callback acknowledged', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"Body\": {\n    \"stkCallback\": {\n      \"MerchantRequestID\": \"1234-5678-9013\",\n      \"CheckoutRequestID\": \"ws_CO_16062026123100000\",\n      \"ResultCode\": 1,\n      \"ResultDesc\": \"The balance is insufficient for the transaction.\",\n      \"CallbackMetadata\": {\n        \"Item\": []\n      },\n      \"AccountReference\": \"KXX 999Z\"\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/mpesa/callback",
+              "host": ["{{baseUrl}}"],
+              "path": ["mpesa", "callback"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

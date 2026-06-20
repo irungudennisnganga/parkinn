@@ -119,6 +119,12 @@ class HikCentralClient {
   getEventSubscriptionView() {
     return this.request('evView', 'POST', '/artemis/api/eventService/v1/eventSubscriptionView', {})
   }
+
+  searchEventRecords(startTime, endTime, eventType) {
+    const body = { pageNo: 1, pageSize: 10, startTime, endTime }
+    if (eventType) body.eventTypes = [eventType]
+    return this.request('evRec', 'POST', '/artemis/api/eventService/v1/eventRecords/page', body)
+  }
 }
 
 module.exports = { HikCentralClient }

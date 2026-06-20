@@ -1,6 +1,9 @@
 const { processAnprEvent } = require('../services/EventProcessor')
 const { EventLog } = require('../models/EventLog')
+const { HikCentralClient } = require('../services/HikCentralClient')
 const { logger } = require('../utils/logger')
+
+const hik = new HikCentralClient()
 
 async function eventRoutes(app) {
   app.post('/eventsRCV', async (request, reply) => {
@@ -17,7 +20,28 @@ async function eventRoutes(app) {
       if (typeof rawBody === 'string') {
         const parsed = parseStringEvent(rawBody)
         if (parsed) {
-          logger.info({ parsed }, 'Parsed string event')
+          logger.info({ parsed }, 'Combined alarm notification — pulling event data')
+          // Pull recent event records to get plate data
+          const now = new Date()
+          const fiveMinAgo = new Date(now - 5 * 60000)
+          const startTime = fiveMinAgo.toISOString()
+          const endTime = now.toISOString()
+          try {
+            const records = await hik.searchEventRecords(startTime, endTime)
+            const events = records?.data?.list || []
+            logger.info({ count: events.length, sample: events[0] }, 'Pulled event records')
+            for (const evt of events) {
+              const data = evt.data || evt.eventData || evt
+              const plateNumber = data.plateNo || data.plateNumber || data.plateLicense || ''
+              const cameraId = evt.srcIndex || data.srcIndex || evt.sourceID || ''
+              if (plateNumber) {
+                const result = await processAnprEvent({ plateNumber, cameraId, eventTime: evt.sendTime || evt.eventTime || now.toISOString() })
+                if (result) updateLog(result)
+              }
+            }
+          } catch (err) {
+            logger.warn({ err: err.message }, 'Failed to pull event records')
+          }
         }
         return reply.status(200).send({ code: '0', msg: 'success' })
       }
@@ -82,6 +106,7 @@ async function eventRoutes(app) {
 }
 
 async function updateLog(result) {
+  if (!result) return
   await EventLog.findOneAndUpdate(
     { plate: result.plate, cameraId: result.cameraId, receivedAt: { $gte: new Date(Date.now() - 60000) } },
     { processed: true, plate: result.plate, cameraId: result.cameraId, direction: result.direction }

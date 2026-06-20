@@ -110,6 +110,12 @@ class HikCentralClient {
     })
   }
 
+  unsubscribeEvents(eventTypes) {
+    return this.request('evUnsub', 'POST', '/artemis/api/eventService/v1/eventUnSubscriptionByEventTypes', {
+      eventTypes,
+    })
+  }
+
   getEventSubscriptionView() {
     return this.request('evView', 'POST', '/artemis/api/eventService/v1/eventSubscriptionView', {})
   }

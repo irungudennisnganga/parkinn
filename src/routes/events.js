@@ -5,63 +5,72 @@ const { logger } = require('../utils/logger')
 async function eventRoutes(app) {
   app.post('/eventsRCV', async (request, reply) => {
     try {
-      let body = request.body
+      const contentType = request.headers['content-type'] || ''
+      const rawBody = request.body
 
-      // Handle plain text body (HikCentral sends combined alarm as string)
-      if (typeof body === 'string') {
-        const parsed = parseStringEvent(body)
+      logger.info({ contentType, bodyType: typeof rawBody }, 'Event received at /eventsRCV')
+
+      // Save raw event to DB for inspection
+      await EventLog.create({ body: rawBody, format: typeof rawBody, receivedAt: new Date() })
+
+      // Handle string body (HikCentral subscription handshake)
+      if (typeof rawBody === 'string') {
+        const parsed = parseStringEvent(rawBody)
         if (parsed) {
-          body = parsed
+          logger.info({ parsed }, 'Parsed string event')
         }
+        return reply.status(200).send({ code: '0', msg: 'success' })
       }
 
-      // Save raw event
-      await EventLog.create({
-        body: body,
-        format: typeof request.body === 'string' ? 'string' : 'json',
-        receivedAt: new Date(),
-      })
-
-      logger.info({ body }, 'Event received at /eventsRCV')
-
-      // Parse JSON events
-      if (typeof body === 'object') {
-        const eventData = body.eventData || body.data || body
-
-        if (body.list && Array.isArray(body.list)) {
-          for (const evt of body.list) {
-            const result = await processAnprEvent(evt)
-            if (result) {
-              await EventLog.findOneAndUpdate(
-                { plate: result.plate, cameraId: result.cameraId, receivedAt: { $gte: new Date(Date.now() - 60000) } },
-                { processed: true, plate: result.plate, cameraId: result.cameraId, direction: result.direction }
-              )
+      // Handle JSON body
+      if (typeof rawBody === 'object' && rawBody !== null) {
+        // Real ANPR event format: { method: "OnEventNotify", params: { ability: "event_veh", events: [...] } }
+        if (rawBody.params && rawBody.params.events && Array.isArray(rawBody.params.events)) {
+          for (const evt of rawBody.params.events) {
+            const data = evt.data || evt
+            const event = {
+              plateNumber: data.plateNo || '',
+              cameraId: evt.srcIndex || data.srcIndex || '',
+              eventTime: rawBody.params.sendTime || new Date().toISOString(),
+            }
+            if (event.plateNumber) {
+              const result = await processAnprEvent(event)
+              if (result) updateLog(result)
             }
           }
-        } else if (eventData && eventData.plateNumber && eventData.cameraId) {
+          return reply.status(200).send({ code: '0', msg: 'success' })
+        }
+
+        // Simplified format: { eventData: { plateNumber, cameraId } }
+        const eventData = rawBody.eventData || rawBody.data || rawBody
+        if (eventData.plateNumber && eventData.cameraId) {
           const result = await processAnprEvent(eventData)
-          if (result) {
-            await EventLog.findOneAndUpdate(
-              { plate: result.plate, cameraId: result.cameraId, receivedAt: { $gte: new Date(Date.now() - 60000) } },
-              { processed: true, plate: result.plate, cameraId: result.cameraId, direction: result.direction }
-            )
-          }
-        } else if (Array.isArray(body.events)) {
-          for (const evt of body.events) {
+          if (result) updateLog(result)
+          return reply.status(200).send({ code: '0', msg: 'success' })
+        }
+
+        // Array format: { events: [...] }
+        if (Array.isArray(rawBody.events)) {
+          for (const evt of rawBody.events) {
             const inner = evt.eventData || evt.data || evt
             if (inner.plateNumber && inner.cameraId) {
               const result = await processAnprEvent(inner)
-              if (result) {
-                await EventLog.findOneAndUpdate(
-                  { plate: result.plate, cameraId: result.cameraId, receivedAt: { $gte: new Date(Date.now() - 60000) } },
-                  { processed: true, plate: result.plate, cameraId: result.cameraId, direction: result.direction }
-                )
-              }
+              if (result) updateLog(result)
             }
           }
-        } else {
-          logger.warn('Unrecognized event payload structure — saved for inspection')
+          return reply.status(200).send({ code: '0', msg: 'success' })
         }
+
+        // List format: { list: [...] }
+        if (rawBody.list && Array.isArray(rawBody.list)) {
+          for (const evt of rawBody.list) {
+            const result = await processAnprEvent(evt)
+            if (result) updateLog(result)
+          }
+          return reply.status(200).send({ code: '0', msg: 'success' })
+        }
+
+        logger.warn({ body: rawBody }, 'Unrecognized JSON event')
       }
 
       return reply.status(200).send({ code: '0', msg: 'success' })
@@ -72,17 +81,18 @@ async function eventRoutes(app) {
   })
 }
 
+async function updateLog(result) {
+  await EventLog.findOneAndUpdate(
+    { plate: result.plate, cameraId: result.cameraId, receivedAt: { $gte: new Date(Date.now() - 60000) } },
+    { processed: true, plate: result.plate, cameraId: result.cameraId, direction: result.direction }
+  )
+}
+
 function parseStringEvent(str) {
-  // Extract plate number (e.g., KXX 999Z or KDJ673J)
   const plateMatch = str.match(/\b([A-Z]{1,3}\s?\d{1,4}[A-Z]{0,1})\b/g)
-  // Extract area/floor name
   const areaMatch = str.match(/(ANPR\s[\dA-Z\s]+?(?:ENTRY|EXIT))/i)
   if (plateMatch || areaMatch) {
-    return {
-      plateNumber: plateMatch?.[0] || '',
-      cameraName: areaMatch?.[0] || '',
-      rawString: str,
-    }
+    return { plateNumber: plateMatch?.[0] || '', cameraName: areaMatch?.[0] || '', rawString: str }
   }
   return null
 }

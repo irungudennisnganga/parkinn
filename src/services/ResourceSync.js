@@ -43,16 +43,26 @@ async function setupWebhook() {
   }
   const eventTypes = [131329, 131330, 131331]
 
-  // Check current subscription status on HikCentral
+  // Unsubscribe ALL previous subscriptions first
   try {
-    const viewRes = await hik.getEventSubscriptionView()
-    logger.info({ view: viewRes }, 'Current event subscription view')
+    await hik.unsubscribeEvents(eventTypes)
+    logger.info('Previous event subscriptions cleared')
   } catch (_) {}
 
-  // Force re-subscribe
+  // Check what's currently subscribed
+  try {
+    const viewRes = await hik.getEventSubscriptionView()
+    logger.info({ view: viewRes }, 'Current subscriptions')
+  } catch (_) {}
+
+  // Subscribe fresh
   try {
     await hik.subscribeEvents(eventTypes, callbackUrl)
-    await EventSubscription.updateOne({ eventDest: callbackUrl }, { eventTypes, eventDest: callbackUrl, status: 'active', subscribedAt: new Date(), updatedAt: new Date() }, { upsert: true })
+    await EventSubscription.updateOne(
+      { eventDest: callbackUrl },
+      { eventTypes, eventDest: callbackUrl, status: 'active', subscribedAt: new Date(), updatedAt: new Date() },
+      { upsert: true }
+    )
     logger.info({ callbackUrl, eventTypes }, 'Event subscription configured')
     return true
   } catch (err) {

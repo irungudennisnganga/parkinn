@@ -46,7 +46,7 @@ describe('POST /eventsRCV', () => {
     it('opens barrier and creates session for unknown vehicle on commercial floor', async () => {
       const res = await sendEvent({ plateNumber: 'UNK 001' })
       expect(res.statusCode).toBe(200)
-      expect(mockControlDoor).toHaveBeenCalledWith('barrier-floor1-entry', 1)
+      expect(mockControlDoor).toHaveBeenCalledWith('barrier-floor1-entry', 1, 0)
 
       const session = await VehicleSession.findOne({ plate: 'UNK 001' })
       expect(session).not.toBeNull()
@@ -57,7 +57,7 @@ describe('POST /eventsRCV', () => {
     it('opens barrier and creates session for known vehicle on commercial floor', async () => {
       const res = await sendEvent({ plateNumber: 'KCA 123A' })
       expect(res.statusCode).toBe(200)
-      expect(mockControlDoor).toHaveBeenCalledWith('barrier-floor1-entry', 1)
+      expect(mockControlDoor).toHaveBeenCalledWith('barrier-floor1-entry', 1, 0)
 
       const session = await VehicleSession.findOne({ plate: 'KCA 123A' })
       expect(session).not.toBeNull()
@@ -71,7 +71,7 @@ describe('POST /eventsRCV', () => {
         cameraId: 'cam-floor5-entry',
       })
       expect(res.statusCode).toBe(200)
-      expect(mockControlDoor).toHaveBeenCalledWith('barrier-floor5-entry', 1)
+      expect(mockControlDoor).toHaveBeenCalledWith('barrier-floor5-entry', 1, 0)
 
       const session = await VehicleSession.findOne({ plate: 'KCA 123A' })
       expect(session).not.toBeNull()
@@ -107,7 +107,7 @@ describe('POST /eventsRCV', () => {
         direction: 'exit',
       })
       expect(res.statusCode).toBe(200)
-      expect(mockControlDoor).toHaveBeenCalledWith('barrier-floor1-exit', 1)
+      expect(mockControlDoor).toHaveBeenCalledWith('barrier-floor1-exit', 1, 1)
 
       const session = await VehicleSession.findOne({ plate: 'KCA 123A' })
       expect(session.status).toBe('exited')
@@ -130,7 +130,7 @@ describe('POST /eventsRCV', () => {
         direction: 'exit',
       })
       expect(res.statusCode).toBe(200)
-      expect(mockControlDoor).toHaveBeenCalledWith('barrier-floor1-exit', 1)
+      expect(mockControlDoor).toHaveBeenCalledWith('barrier-floor1-exit', 1, 1)
 
       const session = await VehicleSession.findOne({ plate: 'UNK 003' })
       expect(session.status).toBe('exited')

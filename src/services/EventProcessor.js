@@ -1,13 +1,19 @@
 const { logger } = require('../utils/logger')
 const { RegisteredVehicle } = require('../models/RegisteredVehicle')
 const { VehicleSession } = require('../models/VehicleSession')
+const { Camera } = require('../models/Camera')
 const { openBarrierByCamera, findBarrierForCamera, getCameraDirection, isResidentialCamera } = require('./BarrierControl')
 const { calculateCharge } = require('./ParkingLogic')
 
 function extractAnprData(event) {
-  if (event.plateNumber) return { plateNumber: event.plateNumber, cameraId: event.cameraId || event.sourceID, eventTime: event.eventTime || event.occurTime }
-
-  const vehicleInfo = event.vehicleRelatedInfo?.vehicleInfo
+  if (event.plateNumber) {
+    return {
+      plateNumber: event.plateNumber,
+      cameraId: event.cameraId || event.sourceID || '',
+      cameraName: event.cameraName || '',
+      eventTime: event.eventTime || event.occurTime || new Date().toISOString(),
+    }
+  }
   if (vehicleInfo?.plateNumber) return { plateNumber: vehicleInfo.plateNumber, cameraId: event.sourceID || event.cameraId || event.eventSource?.sourceID, eventTime: event.occurTime }
 
   const intelliInfo = event.intelliInfo
@@ -30,10 +36,22 @@ async function processAnprEvent(event) {
   const plate = (extracted.plateNumber || event.plateNumber)?.toUpperCase()
   if (!plate) {
     logger.warn({ event }, 'ANPR event missing plate number')
-    return
+    return null
   }
 
-  const cameraId = extracted.cameraId || event.cameraId
+  let cameraId = extracted.cameraId || event.cameraId
+
+  // If no cameraId, try to resolve from camera name
+  if (!cameraId && (extracted.cameraName || event.cameraName)) {
+    const camByName = await Camera.findOne({ name: { $regex: (extracted.cameraName || event.cameraName).trim(), $options: 'i' } })
+    if (camByName) cameraId = camByName.cameraId
+  }
+
+  if (!cameraId) {
+    logger.warn({ plate, event }, 'Could not determine cameraId')
+    return { plate, cameraId: 'unknown', direction: 'unknown' }
+  }
+
   const eventTime = extracted.eventTime || event.eventTime
   const direction = await getCameraDirection(cameraId)
 
@@ -44,6 +62,8 @@ async function processAnprEvent(event) {
   } else if (direction === 'exit') {
     await handleExit(event, plate, cameraId, eventTime)
   }
+
+  return { plate, cameraId, direction }
 }
 
 async function handleEntry(event, plate, cameraId, eventTime) {

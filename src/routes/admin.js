@@ -71,7 +71,18 @@ async function adminRoutes(app) {
   app.get('/vehicles', async (req) => {
     const filter = req.query.plate ? { plate: req.query.plate.toUpperCase() } : {}
     const records = await VehicleRecord.find(filter).sort({ enterTime: -1 }).limit(50).lean()
-    return records.map(r => ({ ...r, duration: formatDuration(r.durationSeconds) }))
+    return records.map(r => ({
+      plate: r.plate,
+      direction: r.direction,
+      parkingLot: r.parkingLotName,
+      passageway: r.passagewayName,
+      lane: r.laneName,
+      enterTime: fmtNairobi(r.enterTime),
+      exitTime: fmtNairobi(r.exitTime),
+      duration: formatDuration(r.durationSeconds),
+      allowed: r.allowed,
+      vehicleType: r.vehicleType,
+    }))
   })
   app.post('/barrier/pay', async (req) => {
     const { plate } = req.body
@@ -82,6 +93,12 @@ async function adminRoutes(app) {
     logger.info({ plate, response: res }, 'Fee confirm')
     return { success: res?.code === '0', plate, calc: calc?.data, confirm: res }
   })
+}
+
+function fmtNairobi(d) {
+  if (!d) return ''
+  const n = new Date(d.getTime() + 3 * 3600000) // UTC+3 Nairobi
+  return n.toISOString().replace('Z', '+03:00')
 }
 
 function formatDuration(seconds) {

@@ -3,7 +3,7 @@ const { seedData, clearData } = require('./helpers')
 const { startMongo, stopMongo } = require('./setup')
 const mongoose = require('mongoose')
 const { VehicleSession } = require('../src/models/VehicleSession')
-const { mockControlBarrier } = require('../src/services/HikCentralClient')
+const { mockControlDoor } = require('../src/services/HikCentralClient')
 
 jest.mock('../src/services/HikCentralClient')
 
@@ -16,7 +16,7 @@ beforeAll(async () => {
 })
 
 beforeEach(async () => {
-  mockControlBarrier.mockClear()
+  mockControlDoor.mockClear()
   await VehicleSession.deleteMany({})
 })
 
@@ -71,7 +71,7 @@ describe('POST /mpesa/callback', () => {
     const session = await VehicleSession.findOne({ plate: 'KXX 999Z' })
     expect(session.status).toBe('exited')
     expect(session.paymentRef).toBe('NLA1234567')
-    expect(mockControlBarrier).toHaveBeenCalled()
+    expect(mockControlDoor).toHaveBeenCalled()
   })
 
   it('does nothing on failed payment callback', async () => {
@@ -95,7 +95,7 @@ describe('POST /mpesa/callback', () => {
     expect(res.statusCode).toBe(200)
     const session = await VehicleSession.findOne({ plate: 'KXX 999Z' })
     expect(session.status).toBe('unpaid')
-    expect(mockControlBarrier).not.toHaveBeenCalled()
+    expect(mockControlDoor).not.toHaveBeenCalled()
   })
 
   it('handles callback with no matching session gracefully', async () => {

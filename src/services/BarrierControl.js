@@ -3,46 +3,71 @@ const { HikCentralClient } = require('./HikCentralClient')
 const { Camera } = require('../models/Camera')
 const { Barrier } = require('../models/Barrier')
 const { Area } = require('../models/Area')
-const config = require('../config')
 
 const hik = new HikCentralClient()
 
-async function openBarrierByCamera(cameraId) {
+async function openBarrier(doorId, direction = 0) {
+  // 1) Try alarm output control first
   try {
-    await hik.controlBarrier(cameraId, 1)
-    logger.info({ cameraId }, 'Barrier opened')
-    return true
+    const aRes = await hik.controlAlarmOutput(doorId, 1)
+    logger.info({ doorId, method: 'alarmOutput', action: 1, response: aRes }, 'Barrier open')
+    if (aRes?.code === '0') return { success: true, method: 'alarmOutput' }
+  } catch (_) {}
+
+  // 2) Fallback: ACS door control with direction
+  try {
+    const dRes = await hik.controlDoor(doorId, 1, direction)
+    logger.info({ doorId, method: 'acsDoor', controlType: 1, direction, response: dRes }, 'Barrier open')
+    return { success: dRes?.code === '0', method: 'acsDoor', resultCode: dRes?.data?.controlResultCode }
   } catch (err) {
-    logger.error({ err: err.message, cameraId }, 'Failed to open barrier')
-    return false
+    logger.error({ err: err.message, doorId }, 'Failed to open barrier')
+    return { success: false }
   }
 }
 
-async function closeBarrier(cameraId) {
+async function closeBarrier(doorId, direction = 0) {
   try {
-    await hik.controlBarrier(cameraId, 2)
-    return true
+    const aRes = await hik.controlAlarmOutput(doorId, 0)
+    logger.info({ doorId, method: 'alarmOutput', action: 0, response: aRes }, 'Barrier close')
+    if (aRes?.code === '0') return { success: true, method: 'alarmOutput' }
+  } catch (_) {}
+
+  try {
+    const dRes = await hik.controlDoor(doorId, 2, direction)
+    logger.info({ doorId, method: 'acsDoor', controlType: 2, direction, response: dRes }, 'Barrier close')
+    return { success: dRes?.code === '0', method: 'acsDoor', resultCode: dRes?.data?.controlResultCode }
   } catch (err) {
-    logger.error({ err: err.message, cameraId }, 'Failed to close barrier')
-    return false
+    logger.error({ err: err.message, doorId }, 'Failed to close barrier')
+    return { success: false }
   }
+}
+
+async function openBarrierByCamera(cameraId) {
+  const barrier = await findBarrierForCamera(cameraId)
+  const doorId = barrier?.barrierId || cameraId
+  const dir = barrier?.direction === 'exit' ? 1 : 0
+  return openBarrier(doorId, dir)
+}
+
+async function closeBarrierByCamera(cameraId) {
+  const barrier = await findBarrierForCamera(cameraId)
+  if (!barrier) return { success: false }
+  const dir = barrier?.direction === 'exit' ? 1 : 0
+  return closeBarrier(barrier.barrierId, dir)
 }
 
 async function findBarrierForCamera(cameraId) {
   return Barrier.findOne({ cameraId })
 }
-
 async function resolveCameraByIndexCode(indexCode) {
   return Camera.findOne({ indexCode })
 }
-
 async function getCameraDirection(cameraId) {
   const cam = await Camera.findOne({ cameraId })
   if (!cam) return 'entry'
   if (cam.direction === 'both') return 'entry'
   return cam.direction || 'entry'
 }
-
 async function isResidentialCamera(cameraId) {
   const cam = await Camera.findOne({ cameraId })
   if (!cam) return false
@@ -51,10 +76,8 @@ async function isResidentialCamera(cameraId) {
 }
 
 module.exports = {
-  openBarrierByCamera,
-  closeBarrier,
-  findBarrierForCamera,
-  resolveCameraByIndexCode,
-  getCameraDirection,
-  isResidentialCamera,
+  openBarrier, closeBarrier,
+  openBarrierByCamera, closeBarrierByCamera,
+  findBarrierForCamera, resolveCameraByIndexCode,
+  getCameraDirection, isResidentialCamera,
 }

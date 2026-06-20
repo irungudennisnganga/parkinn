@@ -1,17 +1,16 @@
-const mockControlBarrier = jest.fn().mockResolvedValue({ errorCode: '0' })
+const mockControlDoor = jest.fn().mockResolvedValue({ code: '0', msg: 'Success' })
 
 class HikCentralClient {
   constructor() {
-    this.controlBarrier = mockControlBarrier
-    this.getAreas = jest.fn().mockResolvedValue({ data: { list: [] } })
-    this.getCameras = jest.fn().mockResolvedValue({ data: { list: [] } })
-    this.getDoors = jest.fn().mockResolvedValue({ data: { list: [] } })
-    this.getToken = jest.fn().mockResolvedValue('mock-token')
+    this.controlDoor = mockControlDoor
+    this.getRegions = jest.fn().mockResolvedValue({ data: { list: [] } })
+    this.getCamerasAll = jest.fn().mockResolvedValue({ data: { list: [] } })
+    this.getParkingLotList = jest.fn()
+    this.getPassagewayRecords = jest.fn().mockResolvedValue({ data: { list: [] } })
     this.request = jest.fn()
-    this.searchPassingRecords = jest.fn()
-    this.configureWebhook = jest.fn().mockResolvedValue({ errorCode: '0' })
-    this.subscribeAlarms = jest.fn().mockResolvedValue({ errorCode: '0' })
+    this.getVersion = jest.fn().mockResolvedValue({ data: {} })
+    this.subscribeEvents = jest.fn().mockResolvedValue({ code: '0', msg: 'Success' })
   }
 }
 
-module.exports = { HikCentralClient, mockControlBarrier }
+module.exports = { HikCentralClient, mockControlDoor }

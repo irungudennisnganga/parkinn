@@ -1,123 +1,117 @@
+const crypto = require('crypto')
 const axios = require('axios')
 const config = require('../config')
 const { logger } = require('../utils/logger')
-const { Token } = require('../models/Token')
 
 class HikCentralClient {
   constructor() {
+    this.accessKey = config.hikcentral.accessKey
+    this.secretKey = config.hikcentral.secretKey
     this.client = axios.create({
       baseURL: config.hikcentral.baseUrl,
       timeout: 30000,
-      headers: { 'Content-Type': 'application/json' },
     })
   }
 
-  async getToken() {
-    const cached = await Token.findOne().sort({ expiresAt: -1 })
-    const FIVE_MIN_MS = 5 * 60 * 1000
-    if (cached && cached.expiresAt > new Date(Date.now() + FIVE_MIN_MS)) {
-      return cached.token
+  async request(tag, method, urlPath, data) {
+    const signature = crypto
+      .createHmac('sha256', this.secretKey)
+      .update(method + '\n' + 'application/json' + '\n' + 'application/json;charset=UTF-8' + '\n' + urlPath)
+      .digest('base64')
+
+    const headers = {
+      'Content-Type': 'application/json;charset=UTF-8',
+      'Accept': 'application/json',
+      'X-Ca-Key': this.accessKey,
+      'X-Ca-Signature': signature,
     }
 
-    const body = {
-      appKey: config.hikcentral.accessKey,
-      secretKey: config.hikcentral.secretKey,
-    }
-
+    logger.info({ tag, method, url: urlPath, body: data }, 'HikCentral API request')
     try {
-      const res = await this.client.post('/api/hccgw/platform/v1/token/get', body)
-      const data = res.data?.data
-      if (!data?.accessToken) throw new Error('No accessToken in response')
-
-      const expireTimeMs = Number(data.expireTime) * 1000
-
-      await Token.create({
-        token: data.accessToken,
-        expiresAt: new Date(expireTimeMs),
-      })
-
-      logger.info('HikCentral token refreshed')
-      return data.accessToken
+      const res = await this.client.request({ method, url: urlPath, data, headers })
+      const d = res.data
+      const list = d?.data?.list
+      logger.info({ tag, code: d?.code, total: d?.data?.total, listCount: list?.length, sample: list?.[0] }, 'HikCentral ok')
+      return d
     } catch (err) {
-      logger.error({ err: err.message }, 'Failed to get HikCentral token')
+      const s = err.response?.status
+      const b = typeof err.response?.data === 'string' ? err.response.data.slice(0, 500) : JSON.stringify(err.response?.data)?.slice(0, 500)
+      logger.error({ tag, status: s, body: b }, 'HikCentral FAILED')
       throw err
     }
   }
 
-  async request(method, url, data) {
-    const token = await this.getToken()
-    const res = await this.client.request({ method, url, data, headers: { Token: token } })
-    return res.data
+  // --- Basic ---
+  getVersion() {
+    return this.request('version', 'POST', '/artemis/api/common/v1/version', {})
+  }
+  getRegions(params = {}) {
+    return this.request('regions', 'POST', '/artemis/api/resource/v1/regions', { pageNo: 1, pageSize: 200, ...params })
+  }
+  getParkingLotList() {
+    return this.request('parkLot', 'POST', '/artemis/api/vehicle/v1/parkinglot/list', {})
   }
 
-  getAreas() {
-    return this.request('POST', '/api/hccgw/resource/v1/areas/get', {
-      pageNo: 1,
+  // --- Cameras ---
+  getCamerasAll() {
+    return this.request('camAll', 'POST', '/artemis/api/resource/v1/cameras', { pageNo: 1, pageSize: 200 })
+  }
+
+  // --- Passageway records (barriers + vehicle passes) ---
+  getPassagewayRecords(parkingLotIndexCode, beginTime, endTime) {
+    return this.request('passRec', 'POST', '/artemis/api/vehicle/v1/parkinglot/passageway/record', {
+      pageIndex: 1,
       pageSize: 200,
+      queryInfo: {
+        parkingLotIndexCode,
+        beginTime,
+        endTime,
+        directionType: -1,
+      },
     })
   }
 
-  getCameras(areaId) {
-    return this.request('POST', '/api/hccgw/resource/v1/areas/cameras/get', {
-      areaId,
-      pageNo: 1,
-      pageSize: 200,
+  // --- Barrier control ---
+  controlDoor(doorIndexCode, controlType, controlDirection) {
+    const body = { doorIndexCodes: [doorIndexCode], controlType }
+    if (controlDirection !== undefined) body.controlDirection = controlDirection
+    return this.request('doorCtrl', 'POST', '/artemis/api/acs/v1/door/doControl', body)
+  }
+
+  confirmParkingFee(plateLicense) {
+    return this.request('parkFee', 'POST', '/artemis/api/vehicle/v1/parkingfee/confirm', {
+      plateLicense, immediatelyLeave: 1, fee: '0',
     })
   }
 
-  getDoors(areaId) {
-    return this.request('POST', '/api/hccgw/resource/v1/areas/doors/get', {
-      areaId,
-      pageNo: 1,
-      pageSize: 200,
+  calculateParkingFee(plateLicense) {
+    return this.request('parkCalc', 'POST', '/artemis/api/vehicle/v1/parkingfee/calculate', {
+      plateLicense,
     })
   }
 
-  controlBarrier(cameraId, controlMode) {
-    return this.request('POST', '/api/hccgw/bi/v1/anpr/barrierGate/control', {
-      cameraId,
-      controlMode,
+  getAlarmOutputs(deviceType) {
+    const body = { pageNo: 1, pageSize: 200 }
+    if (deviceType) body.deviceType = deviceType
+    return this.request('alarmOut', 'POST', '/artemis/api/resource/v1/alarmOutputs', body)
+  }
+
+  controlAlarmOutput(alarmOutputIndexCode, action) {
+    return this.request('alarmCtrl', 'POST', '/artemis/api/resource/v1/alarmOutput/controlling', {
+      alarmOutputIndexCode,
+      action,
     })
   }
 
-  searchPassingRecords(params) {
-    return this.request('POST', '/api/hccgw/bi/v1/anpr/passing/record/search', params)
-  }
-
-  // Webhook configuration (OpenAPI V2.15.0)
-  configureWebhook(callbackUrl, signSecret, retryTimes = 3) {
-    return this.request('POST', '/api/hccgw/webhook/v1/config/save', {
-      callbackUrl,
-      signSecret,
-      retryTimes,
-      retryDelay: 5000,
+  // --- Events ---
+  subscribeEvents(eventTypes, eventDest) {
+    return this.request('evSub', 'POST', '/artemis/api/eventService/v1/eventSubscriptionByEventTypes', {
+      eventTypes, eventDest, passBack: 1,
     })
   }
 
-  // Subscribe to alarm messages
-  subscribeAlarms(eventTypes = []) {
-    return this.request('POST', '/api/hccgw/alarm/v1/mq/subscribe', {
-      subscribeType: 1,
-      subscribeMode: eventTypes.length > 0 ? 1 : 0,
-      eventType: eventTypes,
-    })
-  }
-
-  // Subscribe to raw messages (on-board device events)
-  subscribeRawMessages(msgTypes = []) {
-    return this.request('POST', '/api/hccgw/rawmsg/v1/mq/subscribe', {
-      subscribeType: 1,
-      msgType: msgTypes,
-    })
-  }
-
-  // Subscribe to combined events (ANPR plate reads, custom events)
-  subscribeCombineEvents(eventTypes = []) {
-    return this.request('POST', '/api/hccgw/combine/v1/mq/subscribe', {
-      subscribeType: 1,
-      subscribeMode: eventTypes.length > 0 ? 1 : 0,
-      eventType: eventTypes,
-    })
+  getEventSubscriptionView() {
+    return this.request('evView', 'POST', '/artemis/api/eventService/v1/eventSubscriptionView', {})
   }
 }
 

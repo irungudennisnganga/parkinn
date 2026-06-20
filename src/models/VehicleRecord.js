@@ -13,6 +13,7 @@ const vehicleRecordSchema = new Schema({
   direction: { type: String, enum: ['entry', 'exit'], default: 'entry' },
   enterTime: { type: Date },
   exitTime: { type: Date },
+  durationSeconds: { type: Number, default: 0 },
   imageUrl: { type: String, default: '' },
   ownerName: { type: String, default: '' },
   ownerPhone: { type: String, default: '' },

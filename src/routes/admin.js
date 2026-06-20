@@ -68,6 +68,11 @@ async function adminRoutes(app) {
     const sub = await EventSubscription.findOne().sort({ subscribedAt: -1 }).lean()
     return { hikcentral: res, local: sub }
   })
+  app.get('/vehicles', async (req) => {
+    const filter = req.query.plate ? { plate: req.query.plate.toUpperCase() } : {}
+    const records = await VehicleRecord.find(filter).sort({ enterTime: -1 }).limit(50).lean()
+    return records.map(r => ({ ...r, duration: formatDuration(r.durationSeconds) }))
+  })
   app.post('/barrier/pay', async (req) => {
     const { plate } = req.body
     if (!plate) return { success: false, error: 'plate required' }
@@ -77,6 +82,18 @@ async function adminRoutes(app) {
     logger.info({ plate, response: res }, 'Fee confirm')
     return { success: res?.code === '0', plate, calc: calc?.data, confirm: res }
   })
+}
+
+function formatDuration(seconds) {
+  if (!seconds) return 'N/A'
+  const d = Math.floor(seconds / 86400)
+  const h = Math.floor((seconds % 86400) / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const parts = []
+  if (d > 0) parts.push(`${d}d`)
+  if (h > 0) parts.push(`${h}h`)
+  parts.push(`${m}m`)
+  return parts.join(' ')
 }
 
 module.exports = { adminRoutes }

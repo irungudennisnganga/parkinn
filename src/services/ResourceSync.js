@@ -155,7 +155,10 @@ async function syncResources() {
           const car = rec.carInfo
           if (car?.plateLicense) {
             vehicleCount++
-            await VehicleRecord.updateOne({ guid: rec.guid }, { guid: rec.guid, plate: car.plateLicense, vehicleType: car.carType || 0, parkingLotId: rec.parkingLotInfo?.parkingLotIndexCode || lotCode, parkingLotName: rec.parkingLotInfo?.parkingLotName || lot.parkingLotName || lot.name || '', passagewayId: pw?.passagewayIndexCode || '', passagewayName: pw?.passagewayName || '', laneId: lane?.laneIndexCode || '', laneName: lane?.laneName || '', direction: lane?.direction === 1 ? 'entry' : 'exit', enterTime: car.EnterTime ? new Date(car.EnterTime) : undefined, exitTime: car.ExitTime ? new Date(car.ExitTime) : undefined, imageUrl: car.ImageUrl || '', ownerName: rec.personInfo?.ownerName || '', ownerPhone: rec.personInfo?.ownerPhoneNum || '', allowed: rec.allowResult === 1, syncedAt: new Date() }, { upsert: true })
+            const et = car.EnterTime ? new Date(car.EnterTime) : null
+            const xt = car.ExitTime ? new Date(car.ExitTime) : null
+            const duration = (et && xt) ? Math.round((xt - et) / 1000) : 0
+            await VehicleRecord.updateOne({ guid: rec.guid }, { guid: rec.guid, plate: car.plateLicense, vehicleType: car.carType || 0, parkingLotId: rec.parkingLotInfo?.parkingLotIndexCode || lotCode, parkingLotName: rec.parkingLotInfo?.parkingLotName || lot.parkingLotName || lot.name || '', passagewayId: pw?.passagewayIndexCode || '', passagewayName: pw?.passagewayName || '', laneId: lane?.laneIndexCode || '', laneName: lane?.laneName || '', direction: lane?.direction === 1 ? 'entry' : 'exit', enterTime: et, exitTime: xt, durationSeconds: duration, imageUrl: car.ImageUrl || '', ownerName: rec.personInfo?.ownerName || '', ownerPhone: rec.personInfo?.ownerPhoneNum || '', allowed: rec.allowResult === 1, syncedAt: new Date() }, { upsert: true })
           }
         }
       } catch (_) {}

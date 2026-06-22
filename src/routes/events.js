@@ -2,6 +2,7 @@ const { processAnprEvent } = require('../services/EventProcessor')
 const { EventLog } = require('../models/EventLog')
 const { HikCentralClient } = require('../services/HikCentralClient')
 const { Camera } = require('../models/Camera')
+const { ParkingLot } = require('../models/ParkingLot')
 const { logger } = require('../utils/logger')
 const { isoLocal } = require('../utils/dateUtils')
 
@@ -25,14 +26,48 @@ async function eventRoutes(app) {
         if (parsed) {
           logger.info({ parsed }, 'Combined alarm notification — pulling event data')
           const now = new Date()
-          const fiveMinAgo = new Date(now - 5 * 60000)
-          const startTime = isoLocal(fiveMinAgo)
+          const windowMinsAgo = new Date(now - 15 * 60000)
+          const startTime = isoLocal(windowMinsAgo)
           const endTime = isoLocal(now)
           logger.info({ startTime, endTime }, 'Time window for event records search')
           try {
-            const records = await hik.searchEventRecords(startTime, endTime, ANPR_EVENT_TYPES)
-            const events = records?.data?.list || []
-            logger.info({ count: events.length, sample: events[0] }, 'Pulled event records')
+            let records = await hik.searchEventRecords(startTime, endTime, ANPR_EVENT_TYPES)
+            let events = records?.data?.list || []
+            logger.info({ count: events.length, code: records?.code, total: records?.data?.total }, 'Pulled ANPR event records')
+
+            if (events.length === 0) {
+              logger.info('No ANPR events found, trying without event type filter')
+              records = await hik.searchEventRecords(startTime, endTime)
+              events = records?.data?.list || []
+              logger.info({ count: events.length, code: records?.code }, 'Pulled all event records (no filter)')
+            }
+
+            if (events.length === 0) {
+              logger.info('No event records found, falling back to passageway records')
+              const lots = await ParkingLot.find().lean()
+              for (const lot of lots) {
+                const lotCode = lot.parkingLotIndexCode || lot.parkingLotId
+                try {
+                  const pr = await hik.getPassagewayRecords(lotCode, startTime, endTime)
+                  const passRecords = pr?.data?.list || []
+                  logger.info({ lotCode, count: passRecords.length }, 'Pulled passageway records')
+                  for (const rec of passRecords) {
+                    const car = rec.carInfo
+                    const lane = rec.laneInfo
+                    if (car?.plateLicense) {
+                      const plateNumber = car.plateLicense
+                      const cameraId = lane?.laneIndexCode || ''
+                      const eventTime = car.EnterTime || rec.basicInfo?.occurrenceTime || now.toISOString()
+                      const result = await processAnprEvent({ plateNumber, cameraId, eventTime })
+                      if (result) updateLog(result)
+                    }
+                  }
+                } catch (e) {
+                  logger.warn({ lotCode, err: e.message }, 'Failed to pull passageway records')
+                }
+              }
+            }
+
             for (const evt of events) {
               const data = evt.data || evt.eventData || evt
               const plateNumber = data.plateNo || data.plateNumber || data.plateLicense || ''

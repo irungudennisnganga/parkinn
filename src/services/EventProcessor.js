@@ -14,7 +14,7 @@ function extractAnprData(event) {
       eventTime: event.eventTime || event.occurTime || new Date().toISOString(),
     }
   }
-  if (vehicleInfo?.plateNumber) return { plateNumber: vehicleInfo.plateNumber, cameraId: event.sourceID || event.cameraId || event.eventSource?.sourceID, eventTime: event.occurTime }
+  if (event.vehicleInfo?.plateNumber) return { plateNumber: event.vehicleInfo.plateNumber, cameraId: event.sourceID || event.cameraId || event.eventSource?.sourceID, eventTime: event.occurTime }
 
   const intelliInfo = event.intelliInfo
   if (intelliInfo?.vehicleInfo?.plateNumber) return { plateNumber: intelliInfo.vehicleInfo.plateNumber, cameraId: event.sourceID || event.cameraId, eventTime: event.occurTime }
@@ -96,9 +96,20 @@ async function handleEntry(event, plate, cameraId, eventTime) {
 }
 
 async function handleExit(event, plate, cameraId, eventTime) {
-  const session = await VehicleSession.findOne({ plate, status: 'active' })
+  let session = await VehicleSession.findOne({ plate, status: 'active' })
+
   if (!session) {
-    logger.warn({ plate }, 'Exit event but no active session found')
+    session = await VehicleSession.findOne({ plate, status: 'paid' })
+    if (session) {
+      await openBarrierByCamera(cameraId)
+      session.exitTime = new Date(eventTime)
+      session.exitCamera = cameraId
+      session.status = 'exited'
+      await session.save()
+      logger.info({ plate }, 'Paid vehicle re-detected at exit — barrier opened automatically')
+      return
+    }
+    logger.warn({ plate }, 'Exit event but no active or paid session found')
     return
   }
 

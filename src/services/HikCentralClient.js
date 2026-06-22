@@ -120,9 +120,10 @@ class HikCentralClient {
     return this.request('evView', 'POST', '/artemis/api/eventService/v1/eventSubscriptionView', {})
   }
 
-  searchEventRecords(startTime, endTime, eventType) {
+  searchEventRecords(startTime, endTime, eventTypes) {
     const body = { pageNo: 1, pageSize: 10, startTime, endTime }
-    if (eventType) body.eventTypes = [eventType]
+    if (eventTypes && Array.isArray(eventTypes)) body.eventTypes = eventTypes
+    else if (eventTypes) body.eventTypes = [eventTypes]
     return this.request('evRec', 'POST', '/artemis/api/eventService/v1/eventRecords/page', body)
   }
 }

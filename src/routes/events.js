@@ -1,9 +1,12 @@
 const { processAnprEvent } = require('../services/EventProcessor')
 const { EventLog } = require('../models/EventLog')
 const { HikCentralClient } = require('../services/HikCentralClient')
+const { Camera } = require('../models/Camera')
 const { logger } = require('../utils/logger')
+const { isoLocal } = require('../utils/dateUtils')
 
 const hik = new HikCentralClient()
+const ANPR_EVENT_TYPES = [131329, 131330, 131331]
 
 async function eventRoutes(app) {
   app.post('/eventsRCV', async (request, reply) => {
@@ -16,18 +19,18 @@ async function eventRoutes(app) {
       // Save raw event to DB for inspection
       await EventLog.create({ body: rawBody, format: typeof rawBody, receivedAt: new Date() })
 
-      // Handle string body (HikCentral subscription handshake)
+      // Handle string body (HikCentral combined alarm notification)
       if (typeof rawBody === 'string') {
         const parsed = parseStringEvent(rawBody)
         if (parsed) {
           logger.info({ parsed }, 'Combined alarm notification — pulling event data')
-          // Pull recent event records to get plate data
           const now = new Date()
           const fiveMinAgo = new Date(now - 5 * 60000)
-          const startTime = fiveMinAgo.toISOString()
-          const endTime = now.toISOString()
+          const startTime = isoLocal(fiveMinAgo)
+          const endTime = isoLocal(now)
+          logger.info({ startTime, endTime }, 'Time window for event records search')
           try {
-            const records = await hik.searchEventRecords(startTime, endTime)
+            const records = await hik.searchEventRecords(startTime, endTime, ANPR_EVENT_TYPES)
             const events = records?.data?.list || []
             logger.info({ count: events.length, sample: events[0] }, 'Pulled event records')
             for (const evt of events) {

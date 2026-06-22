@@ -99,30 +99,63 @@ HikCentral owns the source of truth for areas (floors/zones), cameras, and doors
 
 ## 4. Barrier Gate Control
 
-The core actuator integration. Opening/closing a barrier is a single API call:
+The core actuator integration. Opening/closing a barrier uses a **3-method fallback strategy** (`src/services/BarrierControl.js:9`):
+
+### Method 1 — ANPR Barrier Gate Control (HCCGW)
 
 - **Endpoint:** `POST /api/hccgw/bi/v1/anpr/barrierGate/control`
 - **Payload:** `{ "cameraId": "<camera_id>", "controlMode": <int> }`
-- **`controlMode` values:**
-  | Value | Meaning              |
-  |------:|----------------------|
-  |   1   | Open                 |
-  |   2   | Close                |
-  |   3   | Remain open          |
-  |   4   | Disable remain open  |
+- **Availability:** Cloud-only (HikCentral Cloud Gateway). **Not available on on-premise V3.1.0** — returns 404.
+- **`controlMode` values:** 1=Open, 2=Close, 3=Remain open, 4=Disable remain open
 
-> **Important:** The OpenAPI V2.15.0 payload uses `cameraId` + `controlMode`. The alternative `resourceIndexCode`/`resourceType`/`command` schema is **not** used here.
+### Method 2 — Alarm Output Control (always available)
 
-Implementation: `HikCentralClient.js:76` (`controlBarrier`). Wrapper helpers live in `src/services/BarrierControl.js`:
+- **Endpoint:** `POST /artemis/api/resource/v1/alarmOutput/controlling`
+- **Payload:** `{ "alarmOutputIndexCode": "<barrierId>", "action": <int> }`
+- **`action` values:** 1=Open, 0=Close
+- Implementation: `HikCentralClient.js:106` (`controlAlarmOutput`)
 
-- `openBarrierByCamera(cameraId)` — calls `controlBarrier(cameraId, 1)`, returns `true`/`false`.
-- `closeBarrier(cameraId)` — calls `controlBarrier(cameraId, 2)`.
+### Method 3 — ACS Door Control (always available)
+
+- **Endpoint:** `POST /artemis/api/acs/v1/door/doControl`
+- **Payload:** `{ "doorIndexCodes": ["<barrierId>"], "controlType": <int>, "controlDirection": <int> }`
+- **`controlType` values:** 1=Open, 2=Close, 3=Remain open, 4=Disable remain open
+- **`controlDirection`:** 0=entry, 1=exit
+- Implementation: `HikCentralClient.js:82` (`controlDoor`)
+
+> **On-premise note:** On HikCentral Professional V3.1.0, the HCCGW gateway (`/api/hccgw/`) is not installed. Method 1 silently fails (404) and the code falls through to alarm output (method 2). If that also fails, ACS door control (method 3) is the final fallback.
+
+### Barrier opening flow
+
+```
+openBarrier(doorId, direction, cameraId)
+  ├── 1) HCCGW gate control (if cameraId provided)  → /api/hccgw/bi/v1/anpr/barrierGate/control
+  ├── 2) Alarm output control                        → /artemis/api/resource/v1/alarmOutput/controlling
+  └── 3) ACS door control                            → /artemis/api/acs/v1/door/doControl
+```
+
+### Application endpoints that trigger barrier control
+
+| Endpoint | Route file | Method used |
+|----------|-----------|-------------|
+| `POST /gate/control` | `src/index.js:29` | `openBarrier(cameraId, 0, cameraId)` — all 3 methods |
+| `POST /sync/gate/control` | `src/routes/admin.js:63` | Same as above |
+| `POST /camera/:id/open` | `src/routes/admin.js:56` | `openBarrier(id, dir, id)` — all 3 methods |
+| `POST /sync/camera/:id/open` | `src/routes/admin.js:56` | Same as above |
+| `POST /barrier/:id/open` | `src/routes/admin.js:41` | `openBarrier(id, dir)` — alarm → ACS only |
+| `POST /sync/barrier/:id/open` | `src/routes/admin.js:41` | Same as above |
+
+Barrier commands are addressed by **camera ID**, not barrier ID — HikCentral triggers the gate linked to that camera's ANPR channel. A `cameraId` with no linked barrier will still return success from HikCentral but won't move any gate.
+
+Wrapper helpers in `src/services/BarrierControl.js`:
+- `openBarrier(doorId, direction, cameraId)` — 3-method try chain.
+- `closeBarrier(doorId, direction)` — alarm output → ACS door.
+- `openBarrierByCamera(cameraId)` — resolves barrier from camera, calls `openBarrier` with cameraId.
+- `closeBarrierByCamera(cameraId)` — resolves barrier from camera, calls `closeBarrier`.
 - `findBarrierForCamera(cameraId)` — looks up the cached `Barrier` doc linked to a camera.
 - `resolveCameraByIndexCode(indexCode)` — maps a camera's `indexCode` to its `Camera` doc.
 - `getCameraDirection(cameraId)` — returns `entry` / `exit` (falls back to `entry` if unknown or `both`).
 - `isResidentialCamera(cameraId)` — resolves the camera's area and checks `area.areaType === 'residential'`.
-
-Barrier commands are addressed by **camera ID**, not barrier ID — HikCentral triggers the gate linked to that camera's ANPR channel.
 
 ---
 
@@ -228,9 +261,10 @@ Token validity is fixed at 7 days (`config.hikcentral.tokenExpiryDays`, `config/
 
 | Concern                       | File                                   | Key symbol           |
 |-------------------------------|----------------------------------------|----------------------|
-| HTTP client + token mgmt      | `src/services/HikCentralClient.js`     | `HikCentralClient`   |
+| HTTP client + all API calls   | `src/services/HikCentralClient.js`     | `HikCentralClient` — `barrierGateControl`, `controlAlarmOutput`, `controlDoor`, `confirmParkingFee` |
 | Resource sync (areas/cams/doors) | `src/services/ResourceSync.js`      | `syncResources`, `setupWebhook` |
-| Barrier open/close helpers    | `src/services/BarrierControl.js`       | `openBarrierByCamera`, `isResidentialCamera` |
+| Barrier open/close helpers    | `src/services/BarrierControl.js`       | `openBarrier` (3-method fallback), `closeBarrier`, `openBarrierByCamera`, `closeBarrierByCamera` |
+| Gate control endpoint         | `src/index.js:29`, `src/routes/admin.js:63` | `POST /gate/control`, `POST /sync/gate/control` |
 | Webhook receiver              | `src/routes/events.js`                 | `POST /eventsRCV`    |
 | Event → entry/exit dispatch   | `src/services/EventProcessor.js`       | `processAnprEvent`, `handleEntry`, `handleExit` |
 | Token persistence             | `src/models/Token.js`                  | `Token`              |
@@ -245,6 +279,7 @@ Token validity is fixed at 7 days (`config.hikcentral.tokenExpiryDays`, `config/
 - **Always acknowledge webhooks within 5 s.** The handler returns `{ code: '0', msg: 'success' }` even on errors to avoid HikCentral retry storms; failures surface only in logs.
 - **`Token` header, not `Authorization`.** Mixing these up is the most common cause of 401s.
 - **`expireTime` is in seconds.** The client multiplies by 1000 before storing as a JS Date (`HikCentralClient.js:32`).
+- **HCCGW gateway is cloud-only.** The `/api/hccgw/` prefix belongs to HikCentral Cloud Gateway, which is **not installed on on-premise V3.1.0**. All `/api/hccgw/` endpoints return 404. Use the `/artemis/api/` equivalents (alarm output + ACS door control) instead. The HCCGW attempt is kept in the code as a silent bonus — it falls through on error.
 - **Barrier commands address cameras, not barriers.** A `cameraId` with no linked barrier will still return success from HikCentral but won't move any gate.
 - **Residential blocking is camera-based.** If a residential camera's `direction` is mislabeled, an unknown vehicle could be blocked at exit instead of entry (or vice versa). Verify `Camera.direction` after each sync.
 - **Webhook URL source.** `setupWebhook` currently uses `MPESA_CALLBACK_URL` for the HikCentral callback — fix this before deploying to a domain where the M-Pesa and HikCentral callbacks differ.

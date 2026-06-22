@@ -27,6 +27,21 @@ async function createApp() {
   app.register(mpesaRoutes, { prefix: '/mpesa' })
   app.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }))
 
+  // Direct ANPR barrier gate control — tries alarmOutput → ACS door (HCCGW path also attempted if available)
+  app.post('/gate/control', async (req) => {
+    const { openBarrier: gateOpen, closeBarrier: gateClose } = require('./services/BarrierControl')
+    const { cameraId, controlMode } = req.body
+    if (!cameraId) return { success: false, error: 'cameraId required' }
+
+    if (controlMode === 2) {
+      const result = await gateClose(cameraId, 0)
+      return { success: result.success, cameraId, action: 'close', method: result.method, result }
+    }
+
+    const result = await gateOpen(cameraId, 0, cameraId)
+    return { success: result.success, cameraId, action: 'open', method: result.method, result }
+  })
+
   return app
 }
 

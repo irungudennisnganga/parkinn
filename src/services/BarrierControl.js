@@ -6,15 +6,24 @@ const { Area } = require('../models/Area')
 
 const hik = new HikCentralClient()
 
-async function openBarrier(doorId, direction = 0) {
-  // 1) Try alarm output control first
+async function openBarrier(doorId, direction = 0, cameraId = null) {
+  // 1) Try ANPR barrier gate control first (camera-based, only if HCCGW available)
+  if (cameraId) {
+    try {
+      const gRes = await hik.barrierGateControl(cameraId, 1)
+      logger.info({ doorId, cameraId, method: 'anprGate', controlMode: 1, response: gRes }, 'Barrier open')
+      if (gRes?.code === '0' || gRes?.errorCode === '0') return { success: true, method: 'anprGate' }
+    } catch (_) {}
+  }
+
+  // 2) Try alarm output control
   try {
     const aRes = await hik.controlAlarmOutput(doorId, 1)
     logger.info({ doorId, method: 'alarmOutput', action: 1, response: aRes }, 'Barrier open')
     if (aRes?.code === '0') return { success: true, method: 'alarmOutput' }
   } catch (_) {}
 
-  // 2) Fallback: ACS door control with direction
+  // 3) Fallback: ACS door control with direction
   try {
     const dRes = await hik.controlDoor(doorId, 1, direction)
     logger.info({ doorId, method: 'acsDoor', controlType: 1, direction, response: dRes }, 'Barrier open')
@@ -46,7 +55,7 @@ async function openBarrierByCamera(cameraId) {
   const barrier = await findBarrierForCamera(cameraId)
   const doorId = barrier?.barrierId || cameraId
   const dir = barrier?.direction === 'exit' ? 1 : 0
-  return openBarrier(doorId, dir)
+  return openBarrier(doorId, dir, cameraId)
 }
 
 async function closeBarrierByCamera(cameraId) {

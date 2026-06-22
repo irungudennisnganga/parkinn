@@ -1,8 +1,11 @@
 const mockControlDoor = jest.fn().mockResolvedValue({ code: '0', msg: 'Success' })
 const mockControlAlarm = jest.fn().mockRejectedValue(new Error('not available'))
 
+const mockBarrierGateControl = jest.fn().mockRejectedValue(new Error('not available'))
+
 class HikCentralClient {
   constructor() {
+    this.barrierGateControl = mockBarrierGateControl
     this.controlDoor = mockControlDoor
     this.controlAlarmOutput = mockControlAlarm
     this.getRegions = jest.fn().mockResolvedValue({ data: { list: [] } })
@@ -15,4 +18,4 @@ class HikCentralClient {
   }
 }
 
-module.exports = { HikCentralClient, mockControlDoor, mockControlAlarm }
+module.exports = { HikCentralClient, mockControlDoor, mockControlAlarm, mockBarrierGateControl }

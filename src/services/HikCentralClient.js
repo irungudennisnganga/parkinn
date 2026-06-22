@@ -72,6 +72,13 @@ class HikCentralClient {
   }
 
   // --- Barrier control ---
+  barrierGateControl(cameraId, controlMode) {
+    return this.request('barrierGate', 'POST', '/api/hccgw/bi/v1/anpr/barrierGate/control', {
+      cameraId,
+      controlMode,
+    })
+  }
+
   controlDoor(doorIndexCode, controlType, controlDirection) {
     const body = { doorIndexCodes: [doorIndexCode], controlType }
     if (controlDirection !== undefined) body.controlDirection = controlDirection

@@ -52,14 +52,29 @@ async function adminRoutes(app) {
     return { id, direction: dir, action: 'close', ...result }
   })
 
-  // Open by camera (lane) ID
+  // Open by camera (lane) ID — tries ANPR gate control first, then alarm output, then ACS door
   app.post('/camera/:id/open', async (req) => {
     const { id } = req.params
-    // Try both entry (0) and exit (1) directions
     const cam = await Camera.findOne({ cameraId: id })
     const dir = cam?.direction === 'exit' ? 1 : 0
-    const result = await openBarrier(id, dir)
+    const result = await openBarrier(id, dir, id)
     return { id, direction: dir, action: 'camera-open', ...result }
+  })
+
+  // Direct barrier gate control (camera-based) — tries alarmOutput → ACS door (HCCGW also if available)
+  // POST /gate/control  body: { cameraId, controlMode }
+  app.post('/gate/control', async (req) => {
+    const { openBarrier: gateOpen, closeBarrier: gateClose } = require('../services/BarrierControl')
+    const { cameraId, controlMode } = req.body
+    if (!cameraId) return { success: false, error: 'cameraId required' }
+
+    if (controlMode === 2) {
+      const result = await gateClose(cameraId, 0)
+      return { success: result.success, cameraId, action: 'close', method: result.method }
+    }
+
+    const result = await gateOpen(cameraId, 0, cameraId)
+    return { success: result.success, cameraId, action: 'open', method: result.method }
   })
 
   // Event subscription status

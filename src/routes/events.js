@@ -44,6 +44,24 @@ async function eventRoutes(app) {
 
             if (events.length === 0) {
               logger.info('No event records found, falling back to passageway records')
+              const cameraName = parsed.cameraName || ''
+              const inferredDirection = /EXIT/i.test(cameraName) ? 'exit' : 'entry'
+
+              let resolvedCameraId = ''
+              if (cameraName) {
+                const camByName = await Camera.findOne({ name: { $regex: cameraName.trim(), $options: 'i' } })
+                if (camByName) resolvedCameraId = camByName.cameraId
+                if (!resolvedCameraId) {
+                  const camByDir = await Camera.findOne({ direction: inferredDirection })
+                  if (camByDir) resolvedCameraId = camByDir.cameraId
+                }
+                if (!resolvedCameraId) {
+                  const camByNamePart = await Camera.findOne({ name: { $regex: cameraName.replace(/^ANPR\s+/i, '').trim(), $options: 'i' } })
+                  if (camByNamePart) resolvedCameraId = camByNamePart.cameraId
+                }
+              }
+              logger.info({ cameraName, inferredDirection, resolvedCameraId }, 'Resolved camera from combined alarm')
+
               const lots = await ParkingLot.find().lean()
               for (const lot of lots) {
                 const lotCode = lot.parkingLotIndexCode || lot.parkingLotId
@@ -53,12 +71,11 @@ async function eventRoutes(app) {
                   logger.info({ lotCode, count: passRecords.length }, 'Pulled passageway records')
                   for (const rec of passRecords) {
                     const car = rec.carInfo
-                    const lane = rec.laneInfo
                     if (car?.plateLicense) {
                       const plateNumber = car.plateLicense
-                      const cameraId = lane?.laneIndexCode || ''
-                      const eventTime = car.EnterTime || rec.basicInfo?.occurrenceTime || now.toISOString()
-                      const result = await processAnprEvent({ plateNumber, cameraId, eventTime })
+                      const camId = resolvedCameraId || rec.laneInfo?.laneIndexCode || ''
+                      const eventTime = car.EnterTime || now.toISOString()
+                      const result = await processAnprEvent({ plateNumber, cameraId: camId, eventTime })
                       if (result) updateLog(result)
                     }
                   }

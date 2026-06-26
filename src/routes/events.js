@@ -92,7 +92,7 @@ async function eventRoutes(app) {
                       }
                       processedPlates.add(plateNumber)
                       const camId = rec.laneInfo?.laneIndexCode || resolvedCameraId || ''
-                      const eventTime = car.EnterTime || now.toISOString()
+                      const eventTime = (recordDirection === 'exit' && car.ExitTime) ? car.ExitTime : (car.EnterTime || now.toISOString())
                       const result = await processAnprEvent({ plateNumber, cameraId: camId, eventTime })
                       if (result) updateLog(result)
                     }

@@ -13,7 +13,7 @@ class HikCentralClient {
     })
   }
 
-  async request(tag, method, urlPath, data) {
+  async request(tag, method, urlPath, data, { skipErrorLog } = {}) {
     const signature = crypto
       .createHmac('sha256', this.secretKey)
       .update(method + '\n' + 'application/json' + '\n' + 'application/json;charset=UTF-8' + '\n' + urlPath)
@@ -36,7 +36,11 @@ class HikCentralClient {
     } catch (err) {
       const s = err.response?.status
       const b = typeof err.response?.data === 'string' ? err.response.data.slice(0, 500) : JSON.stringify(err.response?.data)?.slice(0, 500)
-      logger.error({ tag, status: s, body: b }, 'HikCentral FAILED')
+      if (skipErrorLog) {
+        logger.warn({ tag, status: s, url: urlPath }, 'HikCentral endpoint not available (expected)')
+      } else {
+        logger.error({ tag, status: s, body: b }, 'HikCentral FAILED')
+      }
       throw err
     }
   }
@@ -76,7 +80,7 @@ class HikCentralClient {
     return this.request('barrierGate', 'POST', '/api/hccgw/bi/v1/anpr/barrierGate/control', {
       cameraId,
       controlMode,
-    })
+    }, { skipErrorLog: true })
   }
 
   controlDoor(doorIndexCode, controlType, controlDirection) {

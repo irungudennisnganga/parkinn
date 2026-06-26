@@ -63,6 +63,7 @@ async function eventRoutes(app) {
               logger.info({ cameraName, inferredDirection, resolvedCameraId }, 'Resolved camera from combined alarm')
 
               const lots = await ParkingLot.find().lean()
+              const processedPlates = new Set()
               for (const lot of lots) {
                 const lotCode = lot.parkingLotIndexCode || lot.parkingLotId
                 try {
@@ -73,6 +74,8 @@ async function eventRoutes(app) {
                     const car = rec.carInfo
                     if (car?.plateLicense) {
                       const plateNumber = car.plateLicense
+                      if (processedPlates.has(plateNumber)) continue
+                      processedPlates.add(plateNumber)
                       const camId = resolvedCameraId || rec.laneInfo?.laneIndexCode || ''
                       const eventTime = car.EnterTime || now.toISOString()
                       const result = await processAnprEvent({ plateNumber, cameraId: camId, eventTime })

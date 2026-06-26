@@ -67,6 +67,12 @@ async function processAnprEvent(event) {
 }
 
 async function handleEntry(event, plate, cameraId, eventTime) {
+  const activeSession = await VehicleSession.findOne({ plate, status: 'active' })
+  if (activeSession) {
+    logger.info({ plate, cameraId, sessionId: activeSession._id }, 'Vehicle already has active session, skipping entry')
+    return
+  }
+
   const registered = await RegisteredVehicle.findOne({ plate, isActive: true })
   const isKnown = !!registered
 
@@ -82,17 +88,14 @@ async function handleEntry(event, plate, cameraId, eventTime) {
   const barrier = await findBarrierForCamera(cameraId)
   const barrierId = barrier?.barrierId || cameraId
 
-  const activeSession = await VehicleSession.findOne({ plate, status: 'active' })
-  if (!activeSession) {
-    await VehicleSession.create({
-      plate,
-      entryTime: new Date(eventTime),
-      entryCamera: cameraId,
-      entryBarrier: barrierId,
-      isKnown,
-      status: 'active',
-    })
-  }
+  await VehicleSession.create({
+    plate,
+    entryTime: new Date(eventTime),
+    entryCamera: cameraId,
+    entryBarrier: barrierId,
+    isKnown,
+    status: 'active',
+  })
 }
 
 async function handleExit(event, plate, cameraId, eventTime) {

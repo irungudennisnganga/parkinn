@@ -69,7 +69,12 @@ async function processAnprEvent(event) {
 async function handleEntry(event, plate, cameraId, eventTime) {
   const activeSession = await VehicleSession.findOne({ plate, status: 'active' })
   if (activeSession) {
-    logger.info({ plate, cameraId, sessionId: activeSession._id }, 'Vehicle already has active session, skipping entry')
+    if (activeSession.entryCamera === cameraId) {
+      logger.info({ plate, cameraId, sessionId: activeSession._id }, 'Vehicle already has active session on this camera, skipping')
+      return
+    }
+    logger.info({ plate, cameraId, sessionId: activeSession._id, prevCamera: activeSession.entryCamera }, 'Vehicle has active session on different camera, opening barrier only')
+    await openBarrierByCamera(cameraId)
     return
   }
 

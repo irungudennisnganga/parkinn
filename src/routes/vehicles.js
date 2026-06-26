@@ -38,6 +38,19 @@ async function vehicleRoutes(app) {
       .limit(100)
     return { sessions }
   })
+
+  app.delete('/:plate', async (request, reply) => {
+    const plate = request.params.plate.toUpperCase()
+    const vehicle = await RegisteredVehicle.findOneAndUpdate(
+      { plate },
+      { isActive: false },
+      { new: true }
+    )
+    if (!vehicle) {
+      return reply.status(404).send({ error: 'Vehicle not found' })
+    }
+    return reply.send({ message: 'Vehicle deactivated', plate: vehicle.plate })
+  })
 }
 
 module.exports = { vehicleRoutes }

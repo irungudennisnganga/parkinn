@@ -7,7 +7,14 @@ const { Area } = require('../models/Area')
 const hik = new HikCentralClient()
 
 async function openBarrier(doorId, direction = 0, cameraId = null) {
-  // 1) Try ANPR barrier gate control first (camera-based, only if HCCGW available)
+  // 1) Try ACS door control (primary for physical barriers/gates)
+  try {
+    const dRes = await hik.controlDoor(doorId, 1, direction)
+    logger.info({ doorId, method: 'acsDoor', controlType: 1, direction, response: dRes }, 'Barrier open')
+    if (dRes?.code === '0') return { success: true, method: 'acsDoor', resultCode: dRes?.data?.controlResultCode }
+  } catch (_) {}
+
+  // 2) Try ANPR barrier gate control (camera-based, only if HCCGW available)
   if (cameraId) {
     try {
       const gRes = await hik.barrierGateControl(cameraId, 1)
@@ -16,39 +23,32 @@ async function openBarrier(doorId, direction = 0, cameraId = null) {
     } catch (_) {}
   }
 
-  // 2) Try alarm output control
+  // 3) Fallback: alarm output control
   try {
     const aRes = await hik.controlAlarmOutput(doorId, 1)
     logger.info({ doorId, method: 'alarmOutput', action: 1, response: aRes }, 'Barrier open')
     if (aRes?.code === '0') return { success: true, method: 'alarmOutput' }
   } catch (_) {}
 
-  // 3) Fallback: ACS door control with direction
-  try {
-    const dRes = await hik.controlDoor(doorId, 1, direction)
-    logger.info({ doorId, method: 'acsDoor', controlType: 1, direction, response: dRes }, 'Barrier open')
-    return { success: dRes?.code === '0', method: 'acsDoor', resultCode: dRes?.data?.controlResultCode }
-  } catch (err) {
-    logger.error({ err: err.message, doorId }, 'Failed to open barrier')
-    return { success: false }
-  }
+  logger.error({ doorId }, 'All barrier open methods failed')
+  return { success: false }
 }
 
 async function closeBarrier(doorId, direction = 0) {
+  try {
+    const dRes = await hik.controlDoor(doorId, 2, direction)
+    logger.info({ doorId, method: 'acsDoor', controlType: 2, direction, response: dRes }, 'Barrier close')
+    if (dRes?.code === '0') return { success: true, method: 'acsDoor', resultCode: dRes?.data?.controlResultCode }
+  } catch (_) {}
+
   try {
     const aRes = await hik.controlAlarmOutput(doorId, 0)
     logger.info({ doorId, method: 'alarmOutput', action: 0, response: aRes }, 'Barrier close')
     if (aRes?.code === '0') return { success: true, method: 'alarmOutput' }
   } catch (_) {}
 
-  try {
-    const dRes = await hik.controlDoor(doorId, 2, direction)
-    logger.info({ doorId, method: 'acsDoor', controlType: 2, direction, response: dRes }, 'Barrier close')
-    return { success: dRes?.code === '0', method: 'acsDoor', resultCode: dRes?.data?.controlResultCode }
-  } catch (err) {
-    logger.error({ err: err.message, doorId }, 'Failed to close barrier')
-    return { success: false }
-  }
+  logger.error({ doorId }, 'All barrier close methods failed')
+  return { success: false }
 }
 
 async function openBarrierByCamera(cameraId) {

@@ -73,6 +73,7 @@ async function eventRoutes(app) {
 
               const lots = await ParkingLot.find().lean()
               const processedPlates = new Set()
+              const mismatchedRecords = []
               for (const lot of lots) {
                 const lotCode = lot.parkingLotIndexCode || lot.parkingLotId
                 try {
@@ -87,7 +88,7 @@ async function eventRoutes(app) {
                       const laneDir = rec.laneInfo?.direction
                       const recordDirection = laneDir === 1 ? 'entry' : laneDir === 2 ? 'exit' : null
                       if (recordDirection && recordDirection !== inferredDirection) {
-                        logger.info({ plateNumber, lane: rec.laneInfo?.laneIndexCode, recordDirection, inferredDirection }, 'Skipping record, direction mismatch')
+                        mismatchedRecords.push({ plateNumber, rec, recordDirection })
                         continue
                       }
                       processedPlates.add(plateNumber)
@@ -99,6 +100,18 @@ async function eventRoutes(app) {
                   }
                 } catch (e) {
                   logger.warn({ lotCode, err: e.message }, 'Failed to pull passageway records')
+                }
+              }
+
+              if (processedPlates.size === 0 && resolvedCameraId && mismatchedRecords.length > 0) {
+                logger.info({ count: mismatchedRecords.length }, 'No records matched direction filter, falling back without filter')
+                for (const { plateNumber, rec } of mismatchedRecords) {
+                  if (processedPlates.has(plateNumber)) continue
+                  processedPlates.add(plateNumber)
+                  const car = rec.carInfo
+                  const eventTime = (car.ExitTime) ? car.ExitTime : (car.EnterTime || now.toISOString())
+                  const result = await processAnprEvent({ plateNumber, cameraId: resolvedCameraId, eventTime })
+                  if (result) updateLog(result)
                 }
               }
             }

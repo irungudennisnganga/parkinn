@@ -49,15 +49,24 @@ async function eventRoutes(app) {
 
               let resolvedCameraId = ''
               if (cameraName) {
-                const camByName = await Camera.findOne({ name: { $regex: cameraName.trim(), $options: 'i' } })
+                const stripped = cameraName.replace(/^ANPR\s+/i, '').trim()
+
+                let camByName = await Camera.findOne({ name: { $regex: cameraName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' } })
                 if (camByName) resolvedCameraId = camByName.cameraId
+
+                if (!resolvedCameraId) {
+                  camByName = await Camera.findOne({ name: { $regex: stripped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' } })
+                  if (camByName) resolvedCameraId = camByName.cameraId
+                }
+
+                if (!resolvedCameraId) {
+                  camByName = await Camera.findOne({ direction: inferredDirection, name: { $regex: stripped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' } })
+                  if (camByName) resolvedCameraId = camByName.cameraId
+                }
+
                 if (!resolvedCameraId) {
                   const camByDir = await Camera.findOne({ direction: inferredDirection })
                   if (camByDir) resolvedCameraId = camByDir.cameraId
-                }
-                if (!resolvedCameraId) {
-                  const camByNamePart = await Camera.findOne({ name: { $regex: cameraName.replace(/^ANPR\s+/i, '').trim(), $options: 'i' } })
-                  if (camByNamePart) resolvedCameraId = camByNamePart.cameraId
                 }
               }
               logger.info({ cameraName, inferredDirection, resolvedCameraId }, 'Resolved camera from combined alarm')
@@ -76,7 +85,7 @@ async function eventRoutes(app) {
                       const plateNumber = car.plateLicense
                       if (processedPlates.has(plateNumber)) continue
                       processedPlates.add(plateNumber)
-                      const camId = resolvedCameraId || rec.laneInfo?.laneIndexCode || ''
+                      const camId = rec.laneInfo?.laneIndexCode || resolvedCameraId || ''
                       const eventTime = car.EnterTime || now.toISOString()
                       const result = await processAnprEvent({ plateNumber, cameraId: camId, eventTime })
                       if (result) updateLog(result)

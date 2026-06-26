@@ -27,6 +27,43 @@ async function createApp() {
   app.register(mpesaRoutes, { prefix: '/mpesa' })
   app.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }))
 
+  app.post('/payments/confirm', async (req, reply) => {
+    const { VehicleSession } = require('./models/VehicleSession')
+    const { openBarrierByCamera } = require('./services/BarrierControl')
+    const { HikCentralClient } = require('./services/HikCentralClient')
+    const hik = new HikCentralClient()
+
+    const plate = (req.body?.plate || '').toUpperCase()
+    if (!plate) return reply.status(400).send({ error: 'plate required' })
+
+    const session = await VehicleSession.findOne({ plate, status: 'unpaid' })
+    if (!session) return reply.status(404).send({ error: 'No unpaid session found for this plate' })
+
+    session.status = 'paid'
+    session.paymentRef = req.body.ref || 'manual'
+    await session.save()
+
+    try {
+      const confirm = await hik.confirmParkingFee(plate)
+      logger.info({ plate, confirm }, 'Parking fee confirmed in HikCentral')
+      if (confirm?.code === '0') {
+        session.status = 'exited'
+        session.exitTime = new Date()
+        await session.save()
+        return reply.send({ success: true, plate, message: 'Payment confirmed, fee cleared in HikCentral' })
+      }
+    } catch (err) {
+      logger.warn({ plate, err: err.message }, 'Parking fee confirm failed, opening barrier directly')
+    }
+
+    if (session.exitCamera) {
+      const result = await openBarrierByCamera(session.exitCamera)
+      return reply.send({ success: result.success, plate, method: result.method, message: 'Barrier opened' })
+    }
+
+    return reply.send({ success: true, plate, message: 'Marked as paid, no exit camera recorded' })
+  })
+
   // Direct ANPR barrier gate control — tries alarmOutput → ACS door (HCCGW path also attempted if available)
   app.post('/gate/control', async (req) => {
     const { openBarrier: gateOpen, closeBarrier: gateClose } = require('./services/BarrierControl')

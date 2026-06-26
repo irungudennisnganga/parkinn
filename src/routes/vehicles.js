@@ -40,16 +40,15 @@ async function vehicleRoutes(app) {
   })
 
   app.delete('/:plate', async (request, reply) => {
-    const plate = request.params.plate.toUpperCase()
-    const vehicle = await RegisteredVehicle.findOneAndUpdate(
-      { plate },
-      { isActive: false },
-      { new: true }
-    )
+    const plate = (request.params.plate || request.body?.plate || '').toUpperCase()
+    if (!plate) {
+      return reply.status(400).send({ error: 'Plate number required' })
+    }
+    const vehicle = await RegisteredVehicle.findOneAndDelete({ plate })
     if (!vehicle) {
       return reply.status(404).send({ error: 'Vehicle not found' })
     }
-    return reply.send({ message: 'Vehicle deactivated', plate: vehicle.plate })
+    return reply.send({ message: 'Vehicle deleted', plate: vehicle.plate })
   })
 }
 

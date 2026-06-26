@@ -10,8 +10,11 @@ async function openBarrier(doorId, direction = 0, cameraId = null) {
   // 1) Try ACS door control (primary for physical barriers/gates)
   try {
     const dRes = await hik.controlDoor(doorId, 1, direction)
-    logger.info({ doorId, method: 'acsDoor', controlType: 1, direction, response: dRes }, 'Barrier open')
-    if (dRes?.code === '0') return { success: true, method: 'acsDoor', resultCode: dRes?.data?.controlResultCode }
+    const resultCode = dRes?.data?.controlResultCode
+    const success = dRes?.code === '0' && (resultCode === undefined || resultCode === null || resultCode === 0)
+    logger.info({ doorId, method: 'acsDoor', controlType: 1, direction, response: dRes, resultCode, success }, 'Barrier open')
+    if (success) return { success: true, method: 'acsDoor', resultCode }
+    logger.warn({ doorId, resultCode }, 'ACS door control failed, falling back')
   } catch (_) {}
 
   // 2) Try ANPR barrier gate control (camera-based, only if HCCGW available)
@@ -37,8 +40,11 @@ async function openBarrier(doorId, direction = 0, cameraId = null) {
 async function closeBarrier(doorId, direction = 0) {
   try {
     const dRes = await hik.controlDoor(doorId, 2, direction)
-    logger.info({ doorId, method: 'acsDoor', controlType: 2, direction, response: dRes }, 'Barrier close')
-    if (dRes?.code === '0') return { success: true, method: 'acsDoor', resultCode: dRes?.data?.controlResultCode }
+    const resultCode = dRes?.data?.controlResultCode
+    const success = dRes?.code === '0' && (resultCode === undefined || resultCode === null || resultCode === 0)
+    logger.info({ doorId, method: 'acsDoor', controlType: 2, direction, response: dRes, resultCode, success }, 'Barrier close')
+    if (success) return { success: true, method: 'acsDoor', resultCode }
+    logger.warn({ doorId, resultCode }, 'ACS door close failed, falling back')
   } catch (_) {}
 
   try {

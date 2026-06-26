@@ -84,6 +84,12 @@ async function eventRoutes(app) {
                     if (car?.plateLicense) {
                       const plateNumber = car.plateLicense
                       if (processedPlates.has(plateNumber)) continue
+                      const laneDir = rec.laneInfo?.direction
+                      const recordDirection = laneDir === 1 ? 'entry' : laneDir === 2 ? 'exit' : null
+                      if (recordDirection && recordDirection !== inferredDirection) {
+                        logger.info({ plateNumber, lane: rec.laneInfo?.laneIndexCode, recordDirection, inferredDirection }, 'Skipping record, direction mismatch')
+                        continue
+                      }
                       processedPlates.add(plateNumber)
                       const camId = rec.laneInfo?.laneIndexCode || resolvedCameraId || ''
                       const eventTime = car.EnterTime || now.toISOString()

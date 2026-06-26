@@ -88,14 +88,19 @@ async function handleEntry(event, plate, cameraId, eventTime) {
   const barrier = await findBarrierForCamera(cameraId)
   const barrierId = barrier?.barrierId || cameraId
 
-  await VehicleSession.create({
-    plate,
-    entryTime: new Date(eventTime),
-    entryCamera: cameraId,
-    entryBarrier: barrierId,
-    isKnown,
-    status: 'active',
-  })
+  try {
+    const session = await VehicleSession.create({
+      plate,
+      entryTime: new Date(eventTime),
+      entryCamera: cameraId,
+      entryBarrier: barrierId,
+      isKnown,
+      status: 'active',
+    })
+    logger.info({ plate, cameraId, sessionId: session._id, barrierId }, 'Vehicle entry session created')
+  } catch (err) {
+    logger.error({ plate, cameraId, err: err.message }, 'Failed to create vehicle entry session')
+  }
 }
 
 async function handleExit(event, plate, cameraId, eventTime) {

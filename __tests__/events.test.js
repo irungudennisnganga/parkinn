@@ -3,7 +3,7 @@ const { seedData, clearData } = require('./helpers')
 const { startMongo, stopMongo } = require('./setup')
 const mongoose = require('mongoose')
 const { VehicleSession } = require('../src/models/VehicleSession')
-const { mockControlDoor } = require('../src/services/HikCentralClient')
+const { mockControlDoor, mockCalculateParkingFee } = require('../src/services/HikCentralClient')
 
 jest.mock('../src/services/HikCentralClient')
 
@@ -15,10 +15,11 @@ beforeAll(async () => {
   await seedData()
 })
 
-beforeEach(async () => {
-  mockControlDoor.mockClear()
-  await VehicleSession.deleteMany({})
-})
+  beforeEach(async () => {
+    mockControlDoor.mockClear()
+    mockCalculateParkingFee.mockClear()
+    await VehicleSession.deleteMany({})
+  })
 
 afterAll(async () => {
   await clearData()
@@ -115,6 +116,19 @@ describe('POST /eventsRCV', () => {
     })
 
     it('opens barrier and exits for unpaid vehicle within grace period', async () => {
+      mockCalculateParkingFee.mockResolvedValueOnce({
+        code: '0',
+        msg: 'Success',
+        data: {
+          plateLicense: 'UNK 003',
+          parkingDuration: 600,
+          feeRuleType: 0,
+          feeRuleIndexCode: '1',
+          feeRuleName: 'default',
+          fee: '0',
+        },
+      })
+
       await VehicleSession.create({
         plate: 'UNK 003',
         entryTime: new Date(Date.now() - 600000),

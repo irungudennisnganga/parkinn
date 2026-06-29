@@ -38,31 +38,32 @@ async function mpesaRoutes(app) {
         return reply.status(200).send({ ResultCode: 0, ResultDesc: 'Success' })
       }
 
-      // Step 1: Try parkingfee/confirm (HikCentral payment barrier open)
+      const session = await VehicleSession.findOne({ plate: plate.toUpperCase(), status: 'paid' })
+      const feeToConfirm = session?.chargeAmount || 0
+
+      // Step 1: Try parkingfee/confirm (HikCentral handles barrier automatically)
       try {
-        const confirm = await hik.confirmParkingFee(plate.toUpperCase())
-        logger.info({ plate, confirm }, 'Parking fee confirm after M-Pesa')
+        const confirm = await hik.confirmParkingFee(plate.toUpperCase(), feeToConfirm, 1)
+        logger.info({ plate, fee: feeToConfirm, confirm }, 'Parking fee confirm after M-Pesa')
         if (confirm?.code === '0') {
-          await VehicleSession.updateOne(
-            { plate: plate.toUpperCase(), status: 'paid' },
-            { exitTime: new Date(), status: 'exited' }
-          )
-          logger.info({ plate, amount }, 'Payment reconciled, barrier opened via confirm')
+          session.exitTime = new Date()
+          session.status = 'exited'
+          await session.save()
+          logger.info({ plate, amount, fee: feeToConfirm }, 'Payment reconciled, barrier opened via HikCentral confirm')
           return reply.status(200).send({ ResultCode: 0, ResultDesc: 'Success' })
         }
       } catch (err) {
-        logger.warn({ plate, err: err.message }, 'Parking fee confirm failed, trying alarm output')
+        logger.warn({ plate, err: err.message }, 'Parking fee confirm failed, falling back to direct barrier control')
       }
 
       // Step 2: Fallback to camera-based barrier open
-      const session = await VehicleSession.findOne({ plate: plate.toUpperCase(), status: 'paid' })
       if (session?.exitCamera) {
         await openBarrierByCamera(session.exitCamera)
         session.exitTime = new Date()
         session.status = 'exited'
         await session.save()
       }
-      logger.info({ plate, amount }, 'Payment reconciled, barrier opened via alarm')
+      logger.info({ plate, amount, fee: feeToConfirm }, 'Payment reconciled, barrier opened via fallback')
 
       return reply.status(200).send({ ResultCode: 0, ResultDesc: 'Success' })
     } catch (err) {

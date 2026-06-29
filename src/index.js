@@ -43,22 +43,24 @@ async function createApp() {
     session.paymentRef = req.body.ref || 'manual'
     await session.save()
 
+    const fee = session.chargeAmount || 0
+
     try {
-      const confirm = await hik.confirmParkingFee(plate)
-      logger.info({ plate, confirm }, 'Parking fee confirmed in HikCentral')
+      const confirm = await hik.confirmParkingFee(plate, fee, 1)
+      logger.info({ plate, fee, confirm }, 'Parking fee confirmed in HikCentral')
       if (confirm?.code === '0') {
         session.status = 'exited'
         session.exitTime = new Date()
         await session.save()
-        return reply.send({ success: true, plate, message: 'Payment confirmed, fee cleared in HikCentral' })
+        return reply.send({ success: true, plate, fee, message: 'Payment confirmed, HikCentral handling barrier' })
       }
     } catch (err) {
-      logger.warn({ plate, err: err.message }, 'Parking fee confirm failed, opening barrier directly')
+      logger.warn({ plate, err: err.message }, 'Parking fee confirm failed, falling back to direct barrier control')
     }
 
     if (session.exitCamera) {
       const result = await openBarrierByCamera(session.exitCamera)
-      return reply.send({ success: result.success, plate, method: result.method, message: 'Barrier opened' })
+      return reply.send({ success: result.success, plate, method: result.method, message: 'Barrier opened via fallback' })
     }
 
     return reply.send({ success: true, plate, message: 'Marked as paid, no exit camera recorded' })

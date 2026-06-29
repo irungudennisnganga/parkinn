@@ -11,6 +11,7 @@ const vehicleSessionSchema = new Schema({
   isKnown: { type: Boolean, default: false },
   chargeAmount: { type: Number, default: 0 },
   chargeRate: { type: String, default: '' },
+  hikCentralFeeData: { type: Schema.Types.Mixed, default: null },
   paymentRef: { type: String, default: '' },
   status: {
     type: String,

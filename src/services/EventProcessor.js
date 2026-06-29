@@ -4,6 +4,7 @@ const { VehicleSession } = require('../models/VehicleSession')
 const { Camera } = require('../models/Camera')
 const { openBarrierByCamera, findBarrierForCamera, getCameraDirection, isResidentialCamera } = require('./BarrierControl')
 const { calculateCharge } = require('./ParkingLogic')
+const { HikCentralClient } = require('./HikCentralClient')
 
 function extractAnprData(event) {
   if (event.plateNumber) {
@@ -139,14 +140,42 @@ async function handleExit(event, plate, cameraId, eventTime) {
     return
   }
 
-  const charge = await calculateCharge(
-    session.entryTime,
-    new Date(eventTime),
-    session.entryCamera
-  )
+  let charge = { amount: 0, rateDescription: '' }
+
+  try {
+    const hik = new HikCentralClient()
+    const hikFee = await hik.calculateParkingFee(plate)
+    if (hikFee?.code === '0' && hikFee?.data) {
+      const data = hikFee.data
+      const feeAmount = parseFloat(data.fee) || 0
+      charge = {
+        amount: feeAmount,
+        rateDescription: `HikCentral: ${data.feeRuleName || 'default'} (type ${data.feeRuleType})`,
+        source: 'hikcentral',
+        hikData: {
+          fee: data.fee,
+          feeRuleType: data.feeRuleType,
+          feeRuleIndexCode: data.feeRuleIndexCode,
+          feeRuleName: data.feeRuleName,
+          parkingDuration: data.parkingDuration,
+          parkingInTime: data.parkingInTime,
+        },
+      }
+      logger.info({ plate, hikFee: data }, 'Parking fee from HikCentral')
+    }
+  } catch (err) {
+    logger.warn({ plate, err: err.message }, 'HikCentral calculate failed, falling back to local calculation')
+  }
+
+  if (charge.source !== 'hikcentral') {
+    charge = await calculateCharge(session.entryTime, new Date(eventTime), session.entryCamera)
+  }
 
   session.chargeAmount = charge.amount
   session.chargeRate = charge.rateDescription
+  if (charge.hikData) {
+    session.hikCentralFeeData = charge.hikData
+  }
 
   if (charge.amount === 0) {
     await openBarrierByCamera(cameraId)
@@ -160,7 +189,7 @@ async function handleExit(event, plate, cameraId, eventTime) {
 
   session.status = 'unpaid'
   await session.save()
-  logger.info({ plate, charge: charge.amount }, 'Unpaid vehicle — barrier stays closed, payment required')
+  logger.info({ plate, charge: charge.amount, source: charge.source || 'local' }, 'Unpaid vehicle — barrier stays closed, payment required')
 }
 
 module.exports = { processAnprEvent }

@@ -89,9 +89,11 @@ class HikCentralClient {
     return this.request('doorCtrl', 'POST', '/artemis/api/acs/v1/door/doControl', body)
   }
 
-  confirmParkingFee(plateLicense) {
+  confirmParkingFee(plateLicense, fee, immediatelyLeave = 1) {
     return this.request('parkFee', 'POST', '/artemis/api/vehicle/v1/parkingfee/confirm', {
-      plateLicense, immediatelyLeave: 1, fee: '0',
+      plateLicense,
+      immediatelyLeave,
+      fee: fee !== undefined && fee !== null ? String(fee) : '0',
     })
   }
 

@@ -3,7 +3,7 @@ const { seedData, clearData } = require('./helpers')
 const { startMongo, stopMongo } = require('./setup')
 const mongoose = require('mongoose')
 const { VehicleSession } = require('../src/models/VehicleSession')
-const { mockControlDoor } = require('../src/services/HikCentralClient')
+const { mockControlDoor, mockConfirmParkingFee, mockCalculateParkingFee } = require('../src/services/HikCentralClient')
 
 jest.mock('../src/services/HikCentralClient')
 
@@ -15,10 +15,12 @@ beforeAll(async () => {
   await seedData()
 })
 
-beforeEach(async () => {
-  mockControlDoor.mockClear()
-  await VehicleSession.deleteMany({})
-})
+  beforeEach(async () => {
+    mockControlDoor.mockClear()
+    mockConfirmParkingFee.mockClear()
+    mockCalculateParkingFee.mockClear()
+    await VehicleSession.deleteMany({})
+  })
 
 afterAll(async () => {
   await clearData()
@@ -71,7 +73,7 @@ describe('POST /mpesa/callback', () => {
     const session = await VehicleSession.findOne({ plate: 'KXX 999Z' })
     expect(session.status).toBe('exited')
     expect(session.paymentRef).toBe('NLA1234567')
-    expect(mockControlDoor).toHaveBeenCalled()
+    expect(mockConfirmParkingFee).toHaveBeenCalledWith('KXX 999Z', 200, 1)
   })
 
   it('does nothing on failed payment callback', async () => {

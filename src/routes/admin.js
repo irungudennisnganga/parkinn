@@ -103,9 +103,10 @@ async function adminRoutes(app) {
     const { plate } = req.body
     if (!plate) return { success: false, error: 'plate required' }
     const calc = await hik.calculateParkingFee(plate)
-    logger.info({ plate, calc }, 'Fee calculate')
-    const res = await hik.confirmParkingFee(plate)
-    logger.info({ plate, response: res }, 'Fee confirm')
+    const fee = calc?.data?.fee || '0'
+    logger.info({ plate, fee, calc }, 'Fee calculate')
+    const res = await hik.confirmParkingFee(plate, parseFloat(fee), 1)
+    logger.info({ plate, fee, response: res }, 'Fee confirm')
     return { success: res?.code === '0', plate, calc: calc?.data, confirm: res }
   })
 }

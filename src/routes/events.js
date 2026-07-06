@@ -5,6 +5,7 @@ const { Camera } = require('../models/Camera')
 const { ParkingLot } = require('../models/ParkingLot')
 const { logger } = require('../utils/logger')
 const { isoLocal } = require('../utils/dateUtils')
+const { broadcastNewEvent, broadcastActiveSessions } = require('../services/WebSocketManager')
 
 const hik = new HikCentralClient()
 const ANPR_EVENT_TYPES = [131329, 131330, 131331]
@@ -197,6 +198,8 @@ async function updateLog(result) {
     { plate: result.plate, cameraId: result.cameraId, receivedAt: { $gte: new Date(Date.now() - 60000) } },
     { processed: true, plate: result.plate, cameraId: result.cameraId, direction: result.direction }
   )
+  broadcastNewEvent(result)
+  broadcastActiveSessions()
 }
 
 function parseStringEvent(str) {

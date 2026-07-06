@@ -1,0 +1,117 @@
+const { VehicleSession } = require('../models/VehicleSession')
+const { EventLog } = require('../models/EventLog')
+const { logger } = require('../utils/logger')
+
+const clients = new Map()
+
+function setupWebSocket(fastify) {
+  fastify.get('/ws', { websocket: true }, (socket, req) => {
+    const clientId = Date.now().toString(36) + Math.random().toString(36).slice(2)
+    clients.set(clientId, { socket, connectedAt: new Date() })
+
+    logger.info({ clientId }, 'WebSocket client connected')
+
+    sendActiveSessions(clientId)
+
+    socket.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw)
+        if (msg.type === 'subscribe_active') {
+          sendActiveSessions(clientId)
+        }
+      } catch {}
+    })
+
+    socket.on('close', () => {
+      clients.delete(clientId)
+      logger.info({ clientId }, 'WebSocket client disconnected')
+    })
+  })
+
+  return {
+    broadcastActiveSessions,
+    broadcastNewSession,
+    broadcastSessionUpdate,
+    broadcastNewEvent,
+  }
+}
+
+async function sendActiveSessions(clientId) {
+  const client = clients.get(clientId)
+  if (!client) return
+
+  try {
+    const sessions = await VehicleSession.find({ status: { $in: ['active', 'unpaid'] } })
+      .sort({ entryTime: -1 })
+      .limit(50)
+      .lean()
+
+    client.socket.send(JSON.stringify({
+      type: 'active_sessions',
+      data: sessions,
+      timestamp: new Date().toISOString(),
+    }))
+  } catch (err) {
+    logger.error({ err: err.message }, 'Failed to send active sessions')
+  }
+}
+
+async function broadcastActiveSessions() {
+  const sessions = await VehicleSession.find({ status: { $in: ['active', 'unpaid'] } })
+    .sort({ entryTime: -1 })
+    .limit(50)
+    .lean()
+
+  const payload = JSON.stringify({
+    type: 'active_sessions',
+    data: sessions,
+    timestamp: new Date().toISOString(),
+  })
+
+  for (const [, client] of clients) {
+    try { client.socket.send(payload) } catch {}
+  }
+}
+
+function broadcastNewSession(session) {
+  const payload = JSON.stringify({
+    type: 'new_session',
+    data: session,
+    timestamp: new Date().toISOString(),
+  })
+
+  for (const [, client] of clients) {
+    try { client.socket.send(payload) } catch {}
+  }
+}
+
+function broadcastSessionUpdate(session) {
+  const payload = JSON.stringify({
+    type: 'session_update',
+    data: session,
+    timestamp: new Date().toISOString(),
+  })
+
+  for (const [, client] of clients) {
+    try { client.socket.send(payload) } catch {}
+  }
+}
+
+function broadcastNewEvent(event) {
+  const payload = JSON.stringify({
+    type: 'new_event',
+    data: {
+      plate: event.plate,
+      direction: event.direction,
+      cameraId: event.cameraId,
+      eventTime: event.eventTime || new Date().toISOString(),
+    },
+    timestamp: new Date().toISOString(),
+  })
+
+  for (const [, client] of clients) {
+    try { client.socket.send(payload) } catch {}
+  }
+}
+
+module.exports = { setupWebSocket, broadcastActiveSessions, broadcastNewSession, broadcastSessionUpdate, broadcastNewEvent }

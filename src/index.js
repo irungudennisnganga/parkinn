@@ -2,6 +2,7 @@ require('dotenv').config()
 
 const Fastify = require('fastify')
 const cors = require('@fastify/cors')
+const websocketPlugin = require('@fastify/websocket')
 const config = require('./config')
 const { logger } = require('./utils/logger')
 const { connectMongo } = require('./config/database')
@@ -9,7 +10,12 @@ const { eventRoutes } = require('./routes/events')
 const { vehicleRoutes } = require('./routes/vehicles')
 const { adminRoutes } = require('./routes/admin')
 const { mpesaRoutes } = require('./routes/mpesa')
+const { authRoutes } = require('./routes/auth')
+const { paymentRoutes } = require('./routes/payments')
+const { recordRoutes } = require('./routes/records')
 const { syncResources, setupWebhook } = require('./services/ResourceSync')
+const { setupWebSocket } = require('./services/WebSocketManager')
+const { jwtAuth } = require('./middleware/jwtAuth')
 
 async function createApp() {
   const app = Fastify({
@@ -19,73 +25,31 @@ async function createApp() {
   })
 
   await app.register(cors, { origin: true })
+  await app.register(websocketPlugin)
   await connectMongo()
 
-  app.register(eventRoutes, { prefix: '/' })
-  app.register(vehicleRoutes, { prefix: '/vehicles' })
-  app.register(adminRoutes, { prefix: '/sync' })
+  const wsManager = setupWebSocket(app)
+
+  app.register(authRoutes, { prefix: '/auth' })
   app.register(mpesaRoutes, { prefix: '/mpesa' })
+  app.register(eventRoutes, { prefix: '/' })
+
+  app.register(async function protectedRoutes(scope) {
+    scope.addHook('preHandler', jwtAuth)
+
+    scope.register(vehicleRoutes, { prefix: '/vehicles' })
+    scope.register(adminRoutes, { prefix: '/sync' })
+    scope.register(paymentRoutes, { prefix: '/payments' })
+    scope.register(recordRoutes, { prefix: '/records' })
+  })
+
   app.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }))
 
-  app.post('/payments/confirm', async (req, reply) => {
-    const { VehicleSession } = require('./models/VehicleSession')
-    const { openBarrierByCamera } = require('./services/BarrierControl')
-    const { HikCentralClient } = require('./services/HikCentralClient')
-    const hik = new HikCentralClient()
-
-    const plate = (req.body?.plate || '').toUpperCase()
-    if (!plate) return reply.status(400).send({ error: 'plate required' })
-
-    const session = await VehicleSession.findOne({ plate, status: 'unpaid' })
-    if (!session) return reply.status(404).send({ error: 'No unpaid session found for this plate' })
-
-    session.status = 'paid'
-    session.paymentRef = req.body.ref || 'manual'
-    await session.save()
-
-    const fee = session.chargeAmount || 0
-
-    try {
-      const confirm = await hik.confirmParkingFee(plate, fee, 1)
-      logger.info({ plate, fee, confirm }, 'Parking fee confirmed in HikCentral')
-      if (confirm?.code === '0') {
-        session.status = 'exited'
-        session.exitTime = new Date()
-        await session.save()
-        return reply.send({ success: true, plate, fee, message: 'Payment confirmed, HikCentral handling barrier' })
-      }
-    } catch (err) {
-      logger.warn({ plate, err: err.message }, 'Parking fee confirm failed, falling back to direct barrier control')
-    }
-
-    if (session.exitCamera) {
-      const result = await openBarrierByCamera(session.exitCamera)
-      return reply.send({ success: result.success, plate, method: result.method, message: 'Barrier opened via fallback' })
-    }
-
-    return reply.send({ success: true, plate, message: 'Marked as paid, no exit camera recorded' })
-  })
-
-  // Direct ANPR barrier gate control — tries alarmOutput → ACS door (HCCGW path also attempted if available)
-  app.post('/gate/control', async (req) => {
-    const { openBarrier: gateOpen, closeBarrier: gateClose } = require('./services/BarrierControl')
-    const { cameraId, controlMode } = req.body
-    if (!cameraId) return { success: false, error: 'cameraId required' }
-
-    if (controlMode === 2) {
-      const result = await gateClose(cameraId, 0)
-      return { success: result.success, cameraId, action: 'close', method: result.method, result }
-    }
-
-    const result = await gateOpen(cameraId, 0, cameraId)
-    return { success: result.success, cameraId, action: 'open', method: result.method, result }
-  })
-
-  return app
+  return { app, wsManager }
 }
 
 async function main() {
-  const app = await createApp()
+  const { app } = await createApp()
 
   try {
     await app.listen({ port: config.port, host: '0.0.0.0' })

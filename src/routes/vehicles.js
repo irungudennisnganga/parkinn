@@ -1,5 +1,6 @@
 const { RegisteredVehicle } = require('../models/RegisteredVehicle')
 const { VehicleSession } = require('../models/VehicleSession')
+const { broadcastActiveSessions } = require('../services/WebSocketManager')
 
 async function vehicleRoutes(app) {
   app.post('/register', async (request, reply) => {

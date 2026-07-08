@@ -4,6 +4,7 @@ const { ChargeRate } = require('../models/ChargeRate')
 const { Camera } = require('../models/Camera')
 const config = require('../config')
 const { hoursBetween, minutesBetween } = require('../utils/dateUtils')
+const { broadcastSessionUpdate, broadcastActiveSessions } = require('./WebSocketManager')
 
 async function calculateCharge(entryTime, exitTime, cameraId) {
   const durationMinutes = minutesBetween(entryTime, exitTime)
@@ -38,6 +39,7 @@ async function markAsPaid(plate, paymentRef) {
   session.paymentRef = paymentRef
   session.status = 'paid'
   await session.save()
+  broadcastSessionUpdate(session)
   logger.info({ plate, paymentRef }, 'Vehicle marked as paid')
   return true
 }

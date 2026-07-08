@@ -2,6 +2,7 @@ const { markAsPaid } = require('../services/ParkingLogic')
 const { openBarrierByCamera } = require('../services/BarrierControl')
 const { HikCentralClient } = require('../services/HikCentralClient')
 const { VehicleSession } = require('../models/VehicleSession')
+const { broadcastSessionUpdate } = require('../services/WebSocketManager')
 const { logger } = require('../utils/logger')
 
 const hik = new HikCentralClient()
@@ -49,6 +50,7 @@ async function mpesaRoutes(app) {
           session.exitTime = new Date()
           session.status = 'exited'
           await session.save()
+          broadcastSessionUpdate(session)
           logger.info({ plate, amount, fee: feeToConfirm }, 'Payment reconciled, barrier opened via HikCentral confirm')
           return reply.status(200).send({ ResultCode: 0, ResultDesc: 'Success' })
         }
@@ -62,6 +64,7 @@ async function mpesaRoutes(app) {
         session.exitTime = new Date()
         session.status = 'exited'
         await session.save()
+        broadcastSessionUpdate(session)
       }
       logger.info({ plate, amount, fee: feeToConfirm }, 'Payment reconciled, barrier opened via fallback')
 

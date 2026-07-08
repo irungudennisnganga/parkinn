@@ -5,6 +5,7 @@ const { Camera } = require('../models/Camera')
 const { openBarrierByCamera, findBarrierForCamera, getCameraDirection, isResidentialCamera } = require('./BarrierControl')
 const { calculateCharge } = require('./ParkingLogic')
 const { HikCentralClient } = require('./HikCentralClient')
+const { broadcastNewSession, broadcastSessionUpdate } = require('./WebSocketManager')
 
 function extractAnprData(event) {
   if (event.plateNumber) {
@@ -59,24 +60,38 @@ async function processAnprEvent(event) {
   logger.info({ plate, cameraId, direction, eventType: event.eventType }, 'Processing ANPR event')
 
   if (direction === 'entry') {
-    await handleEntry(event, plate, cameraId, eventTime)
+    const result = await handleEntry(event, plate, cameraId, eventTime)
+    return { plate, cameraId, direction, action: result.action, session: result.session }
   } else if (direction === 'exit') {
-    await handleExit(event, plate, cameraId, eventTime)
+    const result = await handleExit(event, plate, cameraId, eventTime)
+    return { plate, cameraId, direction, action: result.action, session: result.session }
   }
 
-  return { plate, cameraId, direction }
+  return { plate, cameraId, direction, action: 'unknown', session: null }
 }
 
 async function handleEntry(event, plate, cameraId, eventTime) {
+  const entryDate = new Date(eventTime)
+
   const activeSession = await VehicleSession.findOne({ plate, status: 'active' })
   if (activeSession) {
     if (activeSession.entryCamera === cameraId) {
       logger.info({ plate, cameraId, sessionId: activeSession._id }, 'Vehicle already has active session on this camera, skipping')
-      return
+      return { action: 'skip', session: null }
     }
     logger.info({ plate, cameraId, sessionId: activeSession._id, prevCamera: activeSession.entryCamera }, 'Vehicle has active session on different camera, opening barrier only')
     await openBarrierByCamera(cameraId)
-    return
+    return { action: 'skip', session: null }
+  }
+
+  const recentDuplicate = await VehicleSession.findOne({
+    plate,
+    entryTime: { $gte: new Date(entryDate.getTime() - 5 * 60000), $lte: new Date(entryDate.getTime() + 5 * 60000) },
+  })
+  if (recentDuplicate) {
+    logger.info({ plate, cameraId, existingId: recentDuplicate._id, existingStatus: recentDuplicate.status },
+      'Recent session already exists for this plate, skipping duplicate entry')
+    return { action: 'skip', session: null }
   }
 
   const registered = await RegisteredVehicle.findOne({ plate, isActive: true })
@@ -86,7 +101,7 @@ async function handleEntry(event, plate, cameraId, eventTime) {
 
   if (residential && !isKnown) {
     logger.warn({ plate, cameraId }, 'Unknown vehicle blocked at residential entry')
-    return
+    return { action: 'blocked', session: null }
   }
 
   await openBarrierByCamera(cameraId)
@@ -97,34 +112,46 @@ async function handleEntry(event, plate, cameraId, eventTime) {
   try {
     const session = await VehicleSession.create({
       plate,
-      entryTime: new Date(eventTime),
+      entryTime: entryDate,
       entryCamera: cameraId,
       entryBarrier: barrierId,
       isKnown,
       status: 'active',
     })
     logger.info({ plate, cameraId, sessionId: session._id, barrierId }, 'Vehicle entry session created')
+    broadcastNewSession(session)
+    return { action: 'entry', session }
   } catch (err) {
     logger.error({ plate, cameraId, err: err.message }, 'Failed to create vehicle entry session')
+    return { action: 'error', session: null }
   }
 }
 
 async function handleExit(event, plate, cameraId, eventTime) {
+  const exitDate = new Date(eventTime)
+
   let session = await VehicleSession.findOne({ plate, status: 'active' })
 
   if (!session) {
     session = await VehicleSession.findOne({ plate, status: 'paid' })
     if (session) {
       await openBarrierByCamera(cameraId)
-      session.exitTime = new Date(eventTime)
+      session.exitTime = exitDate
       session.exitCamera = cameraId
       session.status = 'exited'
       await session.save()
       logger.info({ plate }, 'Paid vehicle re-detected at exit — barrier opened automatically')
-      return
+      broadcastSessionUpdate(session)
+      return { action: 'exit', session }
     }
     logger.warn({ plate }, 'Exit event but no active or paid session found')
-    return
+    return { action: 'skip', session: null }
+  }
+
+  if (session.entryTime && exitDate.getTime() - session.entryTime.getTime() < 30000) {
+    logger.info({ plate, entryTime: session.entryTime, exitTime: exitDate },
+      'Exit event within 30 seconds of entry — likely duplicate processing, skipping')
+    return { action: 'skip', session: null }
   }
 
   const registered = await RegisteredVehicle.findOne({ plate, isActive: true })
@@ -132,12 +159,13 @@ async function handleExit(event, plate, cameraId, eventTime) {
 
   if (isKnown) {
     await openBarrierByCamera(cameraId)
-    session.exitTime = new Date(eventTime)
+    session.exitTime = exitDate
     session.exitCamera = cameraId
     session.status = 'exited'
     await session.save()
     logger.info({ plate }, 'Known vehicle — barrier opened for exit')
-    return
+    broadcastSessionUpdate(session)
+    return { action: 'exit', session }
   }
 
   let charge = { amount: 0, rateDescription: '' }
@@ -168,7 +196,7 @@ async function handleExit(event, plate, cameraId, eventTime) {
   }
 
   if (charge.source !== 'hikcentral') {
-    charge = await calculateCharge(session.entryTime, new Date(eventTime), session.entryCamera)
+    charge = await calculateCharge(session.entryTime, exitDate, session.entryCamera)
   }
 
   session.chargeAmount = charge.amount
@@ -179,17 +207,20 @@ async function handleExit(event, plate, cameraId, eventTime) {
 
   if (charge.amount === 0) {
     await openBarrierByCamera(cameraId)
-    session.exitTime = new Date(eventTime)
+    session.exitTime = exitDate
     session.exitCamera = cameraId
     session.status = 'exited'
     await session.save()
     logger.info({ plate }, 'Zero charge (grace period) — barrier opened for exit')
-    return
+    broadcastSessionUpdate(session)
+    return { action: 'exit', session }
   }
 
   session.status = 'unpaid'
   await session.save()
   logger.info({ plate, charge: charge.amount, source: charge.source || 'local' }, 'Unpaid vehicle — barrier stays closed, payment required')
+  broadcastSessionUpdate(session)
+  return { action: 'unpaid', session }
 }
 
 module.exports = { processAnprEvent }

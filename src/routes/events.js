@@ -94,7 +94,12 @@ async function eventRoutes(app) {
                       }
                       processedPlates.add(plateNumber)
                       const camId = rec.laneInfo?.laneIndexCode || resolvedCameraId || ''
-                      const eventTime = (recordDirection === 'exit' && car.ExitTime) ? car.ExitTime : (car.EnterTime || now.toISOString())
+                      let eventTime
+                      if (recordDirection === 'exit') {
+                        eventTime = car.ExitTime || car.EnterTime || now.toISOString()
+                      } else {
+                        eventTime = car.EnterTime || now.toISOString()
+                      }
                       const result = await processAnprEvent({ plateNumber, cameraId: camId, eventTime })
                       if (result) updateLog(result)
                     }
@@ -110,7 +115,11 @@ async function eventRoutes(app) {
                   if (processedPlates.has(plateNumber)) continue
                   processedPlates.add(plateNumber)
                   const car = rec.carInfo
-                  const eventTime = (car.ExitTime) ? car.ExitTime : (car.EnterTime || now.toISOString())
+                  const laneDir = rec.laneInfo?.direction
+                  const recordDirection = laneDir === 1 ? 'entry' : laneDir === 2 ? 'exit' : null
+                  const eventTime = (recordDirection === 'exit' && car.ExitTime)
+                    ? car.ExitTime
+                    : (car.EnterTime || now.toISOString())
                   const result = await processAnprEvent({ plateNumber, cameraId: resolvedCameraId, eventTime })
                   if (result) updateLog(result)
                 }

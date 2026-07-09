@@ -12,37 +12,38 @@ const hik = new HikCentralClient()
 
 async function eventRoutes(app) {
   app.post('/eventsRCV', async (request, reply) => {
+    const rawBody = request.body
+
+    logger.info({ contentType: request.headers['content-type'] || '', bodyType: typeof rawBody }, 'Event received at /eventsRCV')
+
     try {
-      const rawBody = request.body
+      await RawEvent.create({
+        body: rawBody,
+        format: typeof rawBody === 'string' ? 'string' : 'json',
+        receivedAt: new Date(),
+      })
+    } catch (er) {
+      logger.warn({ err: er.message }, 'Failed to save initial RawEvent')
+    }
 
-      logger.info({ contentType: request.headers['content-type'] || '', bodyType: typeof rawBody }, 'Event received at /eventsRCV')
+    try {
+      await EventLog.create({ body: rawBody, format: typeof rawBody, receivedAt: new Date() })
+    } catch (er) {
+      logger.warn({ err: er.message }, 'Failed to save EventLog')
+    }
 
-      try {
-        await RawEvent.create({
-          body: rawBody,
-          format: typeof rawBody === 'string' ? 'string' : 'json',
-          receivedAt: new Date(),
-        })
-      } catch (er) {
-        logger.warn({ err: er.message }, 'Failed to save initial RawEvent')
-      }
+    const events = extractEvents(rawBody)
 
-      try {
-        await EventLog.create({ body: rawBody, format: typeof rawBody, receivedAt: new Date() })
-      } catch (er) {
-        logger.warn({ err: er.message }, 'Failed to save EventLog')
-      }
+    if (events.length === 0) {
+      logger.warn({ bodyPreview: JSON.stringify(rawBody).slice(0, 500) }, 'No events extracted from payload')
+      await saveDroppedEvent(rawBody, '', 'No events extracted from webhook payload', '', '')
+      return reply.status(200).send({ code: '0', msg: 'success' })
+    }
 
-      const events = extractEvents(rawBody)
+    reply.status(200).send({ code: '0', msg: 'success' })
 
-      if (events.length === 0) {
-        logger.warn({ bodyPreview: JSON.stringify(rawBody).slice(0, 500) }, 'No events extracted from payload')
-        await saveDroppedEvent(rawBody, '', 'No events extracted from webhook payload', '', '')
-        return reply.status(200).send({ code: '0', msg: 'success' })
-      }
-
+    setImmediate(async () => {
       let processedCount = 0
-
       for (const evt of events) {
         if (evt.plateNumber) {
           const result = await processAnprEvent(evt)
@@ -78,12 +79,7 @@ async function eventRoutes(app) {
         logger.warn({ count: events.length }, 'No events were processed')
         await saveDroppedEvent(rawBody, '', 'All events skipped — no plates found', '', '')
       }
-
-      return reply.status(200).send({ code: '0', msg: 'success' })
-    } catch (err) {
-      logger.error({ err: err.message, stack: err.stack }, 'Error processing event')
-      return reply.status(200).send({ code: '0', msg: 'success' })
-    }
+    })
   })
 }
 

@@ -23,6 +23,10 @@ async function paymentRoutes(app) {
       session = await VehicleSession.findOne({ plate, status: 'unpaid' })
         .sort({ entryTime: -1 })
     }
+    if (!session) {
+      session = await VehicleSession.findOne({ plate, status: 'paid' })
+        .sort({ entryTime: -1 })
+    }
 
     if (!session) {
       const now = new Date()
@@ -45,8 +49,6 @@ async function paymentRoutes(app) {
     }
 
     const now = new Date()
-    const { amount, rateDescription } = await calculateCharge(session.entryTime, now, session.entryCamera)
-
     let currentFloor = null
     if (session.entryCamera) {
       const cam = await Camera.findOne({
@@ -60,7 +62,24 @@ async function paymentRoutes(app) {
       }
     }
 
-    return reply.send({
+    if (session.status === 'paid') {
+      return reply.send({
+        plate,
+        entryTime: session.entryTime,
+        exitTime: session.exitTime,
+        calculatedAt: now,
+        durationHours: session.exitTime
+          ? Math.round(((new Date(session.exitTime).getTime() - session.entryTime.getTime()) / 3600000) * 100) / 100
+          : Math.round(((now.getTime() - session.entryTime.getTime()) / 3600000) * 100) / 100,
+        chargeAmount: session.chargeAmount,
+        rateDescription: session.chargeRate || 'Manual payment',
+        status: 'paid',
+        paymentRef: session.paymentRef || '',
+        currentFloor,
+      })
+    }
+
+    const { amount, rateDescription } = await calculateCharge(session.entryTime, now, session.entryCamera)
       plate,
       entryTime: session.entryTime,
       calculatedAt: now,
@@ -226,29 +245,7 @@ async function paymentRoutes(app) {
     broadcastSessionUpdate(session)
 
     const fee = session.chargeAmount || 0
-
     const cameraId = session.exitCamera || session.entryCamera
-    const currentCamera = await Camera.findOne({
-      $or: [{ cameraId }, { indexCode: cameraId }],
-    })
-    let isInternalFloor = false
-    if (currentCamera && currentCamera.areaId) {
-      const area = await Area.findOne({ areaId: currentCamera.areaId })
-      if (area) {
-        const floorMatch = area.name.match(/Floor\s*(\d+)/i) || area.name.match(/(\d+)(?:st|nd|rd|th)?\s*Floor/i)
-        if (floorMatch) {
-          isInternalFloor = parseInt(floorMatch[1]) > 1
-        } else {
-          isInternalFloor = area.parentId != null
-        }
-      }
-    }
-
-    if (isInternalFloor) {
-      logger.info({ plate, cameraId, currentFloor: currentCamera?.name || cameraId },
-        'Payment confirmed — car on internal floor, not opening barrier; will auto-open at building exit')
-      return reply.send({ success: true, plate, fee, message: 'Payment confirmed. Drive to building exit — barrier will open automatically.' })
-    }
 
     try {
       const confirm = await hik.confirmParkingFee(plate, fee, 1)

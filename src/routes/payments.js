@@ -198,10 +198,16 @@ async function paymentRoutes(app) {
       return reply.status(400).send({ error: 'plate required' })
     }
 
-    let session = await VehicleSession.findOne({
-      plate,
-      status: { $in: ['active', 'unpaid', 'paid'] },
-    }).sort({ entryTime: -1 })
+    let session = await VehicleSession.findOne({ plate, status: 'active' })
+      .sort({ entryTime: -1 })
+    if (!session) {
+      session = await VehicleSession.findOne({ plate, status: 'unpaid' })
+        .sort({ entryTime: -1 })
+    }
+    if (!session) {
+      session = await VehicleSession.findOne({ plate, status: 'paid' })
+        .sort({ entryTime: -1 })
+    }
 
     if (!session) {
       const hikEntry = await findLatestHikEntryForPlate(plate)
@@ -247,19 +253,27 @@ async function paymentRoutes(app) {
 
     try {
       const confirm = await hik.confirmParkingFee(plate, fee, 1)
-      logger.info({ plate, fee, hikCode: confirm?.code }, 'HikCentral confirmParkingFee sent')
+      if (confirm?.code === '0') {
+        session.status = 'exited'
+        session.exitTime = new Date()
+        session.exitCamera = cameraId
+        await session.save()
+        broadcastSessionUpdate(session)
+        return reply.send({ success: true, plate, fee, message: 'Payment confirmed, barrier opened via HikCentral' })
+      }
+      logger.warn({ plate, code: confirm?.code }, 'HikCentral confirm returned non-zero code')
     } catch (err) {
-      logger.warn({ plate, err: err.message }, 'HikCentral confirmParkingFee failed')
+      logger.warn({ plate, err: err.message }, 'HikCentral confirm failed, trying barrier fallback')
     }
 
     if (cameraId) {
       const result = await openBarrierByCamera(cameraId)
       session.status = 'exited'
       session.exitTime = new Date()
-      session.exitCamera = cameraId
+      session.exitCamera = session.exitCamera || cameraId
       await session.save()
       broadcastSessionUpdate(session)
-      return reply.send({ success: result.success, plate, method: result.method, message: 'Payment confirmed, barrier opened' })
+      return reply.send({ success: result.success, plate, method: result.method, message: 'Barrier opened via camera fallback' })
     }
 
     return reply.send({ success: true, plate, message: 'Marked as paid — exit on next ANPR detection' })

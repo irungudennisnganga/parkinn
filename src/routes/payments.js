@@ -80,6 +80,8 @@ async function paymentRoutes(app) {
     }
 
     const { amount, rateDescription } = await calculateCharge(session.entryTime, now, session.entryCamera)
+
+    return reply.send({
       plate,
       entryTime: session.entryTime,
       calculatedAt: now,

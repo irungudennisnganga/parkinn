@@ -82,25 +82,31 @@ function inferDirectionFromName(cameraName) {
 }
 
 async function resolveDirection(cameraId, cameraName) {
-  if (cameraId) {
-    const direction = await getCameraDirection(cameraId)
-    if (direction && direction !== 'unknown' && direction !== 'both') return direction
+  let direction = null
 
-    if (direction === 'both') {
-      if (cameraName) {
-        const inferred = inferDirectionFromName(cameraName)
-        if (inferred) return inferred
-      }
+  if (cameraId) {
+    direction = await getCameraDirection(cameraId)
+  }
+
+  if ((!direction || direction === 'unknown' || direction === 'both') && cameraName) {
+    const inferred = inferDirectionFromName(cameraName)
+    if (inferred) direction = inferred
+  }
+
+  if (!direction || direction === 'unknown' || direction === 'both') {
+    direction = 'entry'
+  }
+
+  if (direction === 'exit' && cameraId) {
+    const isInternal = await isInternalFloorCamera(cameraId)
+    if (isInternal) {
+      logger.info({ cameraId, cameraName, originalDirection: 'exit' },
+        'Internal floor camera with exit direction — forcing to entry (floor movement, not building exit)')
       return 'entry'
     }
   }
 
-  if (cameraName) {
-    const inferred = inferDirectionFromName(cameraName)
-    if (inferred) return inferred
-  }
-
-  return 'entry'
+  return direction
 }
 
 async function isInternalFloorCamera(cameraId) {

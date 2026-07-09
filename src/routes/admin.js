@@ -2,7 +2,6 @@ const { syncResources } = require('../services/ResourceSync')
 const { Area } = require('../models/Area')
 const { Camera } = require('../models/Camera')
 const { Barrier } = require('../models/Barrier')
-const { BarrierLog } = require('../models/BarrierLog')
 const { VehicleRecord } = require('../models/VehicleRecord')
 const { openBarrier, closeBarrier } = require('../services/BarrierControl')
 const { HikCentralClient } = require('../services/HikCentralClient')
@@ -30,7 +29,7 @@ async function adminRoutes(app) {
 
   app.get('/barriers', async () => {
     const barriers = await Barrier.find().lean()
-    return barriers.map(b => ({ id: b.barrierId, name: b.name, cameraId: b.cameraId, direction: b.direction }))
+    return barriers.map(b => ({ id: b.barrierId, name: b.name, cameraId: b.cameraId }))
   })
 
   app.get('/cameras', async () => {
@@ -42,36 +41,14 @@ async function adminRoutes(app) {
   app.post('/barrier/:id/open', async (req) => {
     const { id } = req.params
     const dir = parseInt(req.query.direction || '0')
-    const barrier = await Barrier.findOne({ barrierId: id })
     const result = await openBarrier(id, dir)
-
-    await BarrierLog.create({
-      barrierId: id,
-      barrierName: barrier?.name || id,
-      action: 'open',
-      method: result.method || 'unknown',
-      triggeredBy: req.user?.email || 'admin',
-      success: result.success,
-    })
-
     return { id, direction: dir, action: 'open', ...result }
   })
 
   app.post('/barrier/:id/close', async (req) => {
     const { id } = req.params
     const dir = parseInt(req.query.direction || '0')
-    const barrier = await Barrier.findOne({ barrierId: id })
     const result = await closeBarrier(id, dir)
-
-    await BarrierLog.create({
-      barrierId: id,
-      barrierName: barrier?.name || id,
-      action: 'close',
-      method: result.method || 'unknown',
-      triggeredBy: req.user?.email || 'admin',
-      success: result.success,
-    })
-
     return { id, direction: dir, action: 'close', ...result }
   })
 
@@ -105,39 +82,6 @@ async function adminRoutes(app) {
     const res = await hik.getEventSubscriptionView()
     const sub = await EventSubscription.findOne().sort({ subscribedAt: -1 }).lean()
     return { hikcentral: res, local: sub }
-  })
-
-  app.get('/barrier-logs', async (req) => {
-    const page = parseInt(req.query.page) || 1
-    const limit = Math.min(parseInt(req.query.limit) || 50, 200)
-    const skip = (page - 1) * limit
-    const barrierId = req.query.barrierId || ''
-    const action = req.query.action || ''
-
-    const filter = {}
-    if (barrierId) filter.barrierId = barrierId
-    if (action && ['open', 'close'].includes(action)) filter.action = action
-
-    const [logs, total] = await Promise.all([
-      BarrierLog.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
-      BarrierLog.countDocuments(filter),
-    ])
-
-    return {
-      logs: logs.map(l => ({
-        _id: l._id,
-        barrierId: l.barrierId,
-        barrierName: l.barrierName,
-        action: l.action,
-        method: l.method,
-        triggeredBy: l.triggeredBy,
-        plate: l.plate,
-        cameraId: l.cameraId,
-        success: l.success,
-        createdAt: l.createdAt,
-      })),
-      pagination: { page, limit, total, totalPages: Math.ceil(total / limit), hasMore: skip + limit < total },
-    }
   })
   app.get('/vehicles', async (req) => {
     const filter = req.query.plate ? { plate: req.query.plate.toUpperCase() } : {}

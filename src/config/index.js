@@ -26,7 +26,7 @@ module.exports = {
 
   payment: {
     defaultRatePerHour: parseInt(process.env.DEFAULT_RATE_PER_HOUR || '100', 10),
-    defaultGraceMinutes: parseInt(process.env.DEFAULT_GRACE_MINUTES || '3', 10),
+    defaultGraceMinutes: parseInt(process.env.DEFAULT_GRACE_MINUTES || '15', 10),
   },
 
   floors: {

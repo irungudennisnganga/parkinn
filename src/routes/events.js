@@ -1,11 +1,12 @@
 const { processAnprEvent } = require('../services/EventProcessor')
 const { EventLog } = require('../models/EventLog')
+const { RawEvent } = require('../models/RawEvent')
 const { HikCentralClient } = require('../services/HikCentralClient')
 const { Camera } = require('../models/Camera')
 const { ParkingLot } = require('../models/ParkingLot')
 const { logger } = require('../utils/logger')
 const { isoLocal } = require('../utils/dateUtils')
-const { broadcastNewEvent, broadcastActiveSessions } = require('../services/WebSocketManager')
+const { broadcastNewEvent, broadcastActiveSessions, broadcastRawEvent } = require('../services/WebSocketManager')
 
 const hik = new HikCentralClient()
 const ANPR_EVENT_TYPES = [131329, 131330, 131331]
@@ -17,6 +18,13 @@ async function eventRoutes(app) {
       const rawBody = request.body
 
       logger.info({ contentType, bodyType: typeof rawBody }, 'Event received at /eventsRCV')
+
+      // Save every incoming event as a raw record
+      await RawEvent.create({
+        body: rawBody,
+        format: typeof rawBody === 'string' ? 'string' : 'json',
+        receivedAt: new Date(),
+      })
 
       // Save raw event to DB for inspection
       await EventLog.create({ body: rawBody, format: typeof rawBody, receivedAt: new Date() })
@@ -101,7 +109,7 @@ async function eventRoutes(app) {
                         eventTime = car.EnterTime || now.toISOString()
                       }
                       const result = await processAnprEvent({ plateNumber, cameraId: camId, eventTime })
-                      if (result) updateLog(result)
+                      if (result) updateLog(result, rawBody)
                     }
                   }
                 } catch (e) {
@@ -121,7 +129,7 @@ async function eventRoutes(app) {
                     ? car.ExitTime
                     : (car.EnterTime || now.toISOString())
                   const result = await processAnprEvent({ plateNumber, cameraId: resolvedCameraId, eventTime })
-                  if (result) updateLog(result)
+                  if (result) updateLog(result, rawBody)
                 }
               }
             }
@@ -132,12 +140,15 @@ async function eventRoutes(app) {
               const cameraId = evt.srcIndex || data.srcIndex || evt.sourceID || ''
               if (plateNumber) {
                 const result = await processAnprEvent({ plateNumber, cameraId, eventTime: evt.sendTime || evt.eventTime || now.toISOString() })
-                if (result) updateLog(result)
+                if (result) updateLog(result, rawBody)
               }
             }
           } catch (err) {
             logger.warn({ err: err.message }, 'Failed to pull event records')
           }
+        }
+        } else {
+          await saveDroppedEvent(rawBody, '', 'Could not parse string event — no plate or camera name found', '', '')
         }
         return reply.status(200).send({ code: '0', msg: 'success' })
       }
@@ -155,7 +166,7 @@ async function eventRoutes(app) {
             }
             if (event.plateNumber) {
               const result = await processAnprEvent(event)
-              if (result) updateLog(result)
+              if (result) updateLog(result, rawBody)
             }
           }
           return reply.status(200).send({ code: '0', msg: 'success' })
@@ -165,7 +176,7 @@ async function eventRoutes(app) {
         const eventData = rawBody.eventData || rawBody.data || rawBody
         if (eventData.plateNumber && eventData.cameraId) {
           const result = await processAnprEvent(eventData)
-          if (result) updateLog(result)
+          if (result) updateLog(result, rawBody)
           return reply.status(200).send({ code: '0', msg: 'success' })
         }
 
@@ -175,7 +186,7 @@ async function eventRoutes(app) {
             const inner = evt.eventData || evt.data || evt
             if (inner.plateNumber && inner.cameraId) {
               const result = await processAnprEvent(inner)
-              if (result) updateLog(result)
+              if (result) updateLog(result, rawBody)
             }
           }
           return reply.status(200).send({ code: '0', msg: 'success' })
@@ -185,12 +196,13 @@ async function eventRoutes(app) {
         if (rawBody.list && Array.isArray(rawBody.list)) {
           for (const evt of rawBody.list) {
             const result = await processAnprEvent(evt)
-            if (result) updateLog(result)
+            if (result) updateLog(result, rawBody)
           }
           return reply.status(200).send({ code: '0', msg: 'success' })
         }
 
         logger.warn({ body: rawBody }, 'Unrecognized JSON event')
+        await saveDroppedEvent(rawBody, '', 'Unrecognized JSON format — no matching event structure found', '', '')
       }
 
       return reply.status(200).send({ code: '0', msg: 'success' })
@@ -201,14 +213,48 @@ async function eventRoutes(app) {
   })
 }
 
-async function updateLog(result) {
+async function updateLog(result, rawBody) {
   if (!result) return
   await EventLog.findOneAndUpdate(
     { plate: result.plate, cameraId: result.cameraId, receivedAt: { $gte: new Date(Date.now() - 60000) } },
     { processed: true, plate: result.plate, cameraId: result.cameraId, direction: result.direction }
   )
+
+  await RawEvent.create({
+    body: rawBody || {},
+    format: 'processed',
+    plate: result.plate || '',
+    cameraId: result.cameraId || '',
+    cameraName: result.cameraName || '',
+    direction: result.direction || '',
+    eventTime: result.eventTime || new Date().toISOString(),
+    action: result.action || '',
+    reason: result.reason || '',
+    sessionId: result.session?._id?.toString() || '',
+    processed: true,
+    receivedAt: new Date(),
+  })
+
   broadcastNewEvent(result)
+  broadcastRawEvent(result)
   broadcastActiveSessions()
+}
+
+async function saveDroppedEvent(rawBody, plate, reason, cameraId, cameraName) {
+  const doc = await RawEvent.create({
+    body: rawBody || {},
+    format: typeof rawBody === 'string' ? 'string' : 'json',
+    plate: plate || '',
+    cameraId: cameraId || 'unknown',
+    cameraName: cameraName || '',
+    direction: 'unknown',
+    eventTime: new Date().toISOString(),
+    action: 'dropped',
+    reason: reason || 'Unknown reason',
+    processed: false,
+    receivedAt: new Date(),
+  })
+  broadcastRawEvent(doc)
 }
 
 function parseStringEvent(str) {

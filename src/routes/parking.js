@@ -469,6 +469,33 @@ function formatDuration(seconds) {
   if (h > 0) parts.push(`${h}h`)
   if (m > 0) parts.push(`${m}m`)
   return parts.join(' ') || '<1m'
+  fastify.get('/raw-events', async (request, reply) => {
+    const { RawEvent } = require('../models/RawEvent')
+    const page = parseInt(request.query.page) || 1
+    const limit = Math.min(parseInt(request.query.limit) || 50, 200)
+    const skip = (page - 1) * limit
+
+    const filter = {}
+    if (request.query.plate) filter.plate = { $regex: request.query.plate, $options: 'i' }
+    if (request.query.action) filter.action = request.query.action
+    if (request.query.direction) filter.direction = request.query.direction
+
+    const [events, total] = await Promise.all([
+      RawEvent.find(filter).sort({ receivedAt: -1 }).skip(skip).limit(limit).lean(),
+      RawEvent.countDocuments(filter),
+    ])
+
+    return reply.send({ success: true, events, total, page, totalPages: Math.ceil(total / limit) })
+  })
+
+  fastify.post('/raw-events/cleanup', async (request, reply) => {
+    const { RawEvent } = require('../models/RawEvent')
+    const daysOld = parseInt(request.query.days) || 7
+    const cutoff = new Date(Date.now() - daysOld * 86400000)
+    const result = await RawEvent.deleteMany({ receivedAt: { $lt: cutoff } })
+    return reply.send({ success: true, deleted: result.deletedCount, message: `Deleted ${result.deletedCount} events older than ${daysOld} days` })
+  })
+
 }
 
 module.exports = { parkingRoutes }

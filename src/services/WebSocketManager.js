@@ -1,5 +1,6 @@
 const { VehicleSession } = require('../models/VehicleSession')
 const { EventLog } = require('../models/EventLog')
+const { RawEvent } = require('../models/RawEvent')
 const { logger } = require('../utils/logger')
 
 const clients = new Map()
@@ -18,6 +19,9 @@ function setupWebSocket(fastify) {
         const msg = JSON.parse(raw)
         if (msg.type === 'subscribe_active') {
           sendActiveSessions(clientId)
+        }
+        if (msg.type === 'subscribe_raw_events') {
+          sendRecentRawEvents(clientId)
         }
       } catch {}
     })
@@ -114,4 +118,46 @@ function broadcastNewEvent(event) {
   }
 }
 
-module.exports = { setupWebSocket, broadcastActiveSessions, broadcastNewSession, broadcastSessionUpdate, broadcastNewEvent }
+function broadcastRawEvent(event) {
+  const payload = JSON.stringify({
+    type: 'raw_event',
+    data: {
+      plate: event.plate || event.data?.plate || '',
+      direction: event.direction || event.data?.direction || '',
+      cameraId: event.cameraId || event.data?.cameraId || '',
+      cameraName: event.cameraName || event.data?.cameraName || '',
+      action: event.action || event.data?.action || '',
+      reason: event.reason || event.data?.reason || '',
+      sessionId: event.sessionId || event.data?.sessionId || (event.session?._id?.toString()) || '',
+      eventTime: event.eventTime || new Date().toISOString(),
+      receivedAt: event.receivedAt || new Date().toISOString(),
+    },
+    timestamp: new Date().toISOString(),
+  })
+
+  for (const [, client] of clients) {
+    try { client.socket.send(payload) } catch {}
+  }
+}
+
+async function sendRecentRawEvents(clientId) {
+  const client = clients.get(clientId)
+  if (!client) return
+
+  try {
+    const events = await RawEvent.find({})
+      .sort({ receivedAt: -1 })
+      .limit(50)
+      .lean()
+
+    client.socket.send(JSON.stringify({
+      type: 'raw_events',
+      data: events,
+      timestamp: new Date().toISOString(),
+    }))
+  } catch (err) {
+    logger.error({ err: err.message }, 'Failed to send raw events')
+  }
+}
+
+module.exports = { setupWebSocket, broadcastActiveSessions, broadcastNewSession, broadcastSessionUpdate, broadcastNewEvent, broadcastRawEvent }

@@ -9,6 +9,7 @@ const { HikCentralClient } = require('../services/HikCentralClient')
 const { broadcastSessionUpdate } = require('../services/WebSocketManager')
 const { logger } = require('../utils/logger')
 const { isoLocal } = require('../utils/dateUtils')
+const { Area } = require('../models/Area')
 
 const hik = new HikCentralClient()
 
@@ -143,11 +144,35 @@ async function paymentRoutes(app) {
 
     const fee = session.chargeAmount || 0
 
+    const cameraId = session.exitCamera || session.entryCamera
+    const currentCamera = await Camera.findOne({
+      $or: [{ cameraId }, { indexCode: cameraId }],
+    })
+    let isInternalFloor = false
+    if (currentCamera && currentCamera.areaId) {
+      const area = await Area.findOne({ areaId: currentCamera.areaId })
+      if (area) {
+        const floorMatch = area.name.match(/Floor\s*(\d+)/i) || area.name.match(/(\d+)(?:st|nd|rd|th)?\s*Floor/i)
+        if (floorMatch) {
+          isInternalFloor = parseInt(floorMatch[1]) > 1
+        } else {
+          isInternalFloor = area.parentId != null
+        }
+      }
+    }
+
+    if (isInternalFloor) {
+      logger.info({ plate, cameraId, currentFloor: currentCamera?.name || cameraId },
+        'Payment confirmed — car on internal floor, not opening barrier; will auto-open at building exit')
+      return reply.send({ success: true, plate, fee, message: 'Payment confirmed. Drive to building exit — barrier will open automatically.' })
+    }
+
     try {
       const confirm = await hik.confirmParkingFee(plate, fee, 1)
       if (confirm?.code === '0') {
         session.status = 'exited'
         session.exitTime = new Date()
+        session.exitCamera = cameraId
         await session.save()
         broadcastSessionUpdate(session)
         return reply.send({ success: true, plate, fee, message: 'Payment confirmed, barrier opened via HikCentral' })
@@ -157,7 +182,6 @@ async function paymentRoutes(app) {
       logger.warn({ plate, err: err.message }, 'HikCentral confirm failed, trying barrier fallback')
     }
 
-    const cameraId = session.exitCamera || session.entryCamera
     if (cameraId) {
       const result = await openBarrierByCamera(cameraId)
       session.status = 'exited'

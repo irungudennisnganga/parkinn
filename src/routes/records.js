@@ -76,6 +76,7 @@ async function recordRoutes(app) {
     }))
 
     return reply.send({
+      success: true,
       plate,
       isRegistered: !!registered,
       registeredVehicle: registered ? {

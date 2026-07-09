@@ -49,7 +49,7 @@ async function sendActiveSessions(clientId) {
   try {
     const sessions = await VehicleSession.find({ status: { $in: ['active', 'unpaid'] } })
       .sort({ entryTime: -1 })
-      .limit(50)
+      .limit(500)
       .lean()
 
     client.socket.send(JSON.stringify({
@@ -65,7 +65,7 @@ async function sendActiveSessions(clientId) {
 async function broadcastActiveSessions() {
   const sessions = await VehicleSession.find({ status: { $in: ['active', 'unpaid'] } })
     .sort({ entryTime: -1 })
-    .limit(50)
+    .limit(500)
     .lean()
 
   const payload = JSON.stringify({

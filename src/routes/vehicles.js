@@ -41,7 +41,7 @@ async function vehicleRoutes(app) {
   app.get('/active', async () => {
     const sessions = await VehicleSession.find({ status: { $in: ['active', 'unpaid'] } })
       .sort({ entryTime: -1 })
-      .limit(100)
+      .limit(500)
     return { sessions }
   })
 

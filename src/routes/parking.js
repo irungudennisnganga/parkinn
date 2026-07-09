@@ -457,18 +457,19 @@ async function parkingRoutes(app) {
       totalActive: sessions.length,
     }
   })
-}
 
-function formatDuration(seconds) {
-  if (!seconds) return 'N/A'
-  const d = Math.floor(seconds / 86400)
-  const h = Math.floor((seconds % 86400) / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  const parts = []
-  if (d > 0) parts.push(`${d}d`)
-  if (h > 0) parts.push(`${h}h`)
-  if (m > 0) parts.push(`${m}m`)
-  return parts.join(' ') || '<1m'
+  function formatDuration(seconds) {
+    if (!seconds) return 'N/A'
+    const d = Math.floor(seconds / 86400)
+    const h = Math.floor((seconds % 86400) / 3600)
+    const m = Math.floor((seconds % 3600) / 60)
+    const parts = []
+    if (d > 0) parts.push(`${d}d`)
+    if (h > 0) parts.push(`${h}h`)
+    if (m > 0) parts.push(`${m}m`)
+    return parts.join(' ') || '<1m'
+  }
+
   app.get('/raw-events', async (request, reply) => {
     const { RawEvent } = require('../models/RawEvent')
     const page = parseInt(request.query.page) || 1
@@ -494,6 +495,174 @@ function formatDuration(seconds) {
     const cutoff = new Date(Date.now() - daysOld * 86400000)
     const result = await RawEvent.deleteMany({ receivedAt: { $lt: cutoff } })
     return reply.send({ success: true, deleted: result.deletedCount, message: `Deleted ${result.deletedCount} events older than ${daysOld} days` })
+  })
+
+  app.get('/passageway-records', async (request, reply) => {
+    const { HikCentralClient } = require('../services/HikCentralClient')
+    const { isoLocal } = require('../utils/dateUtils')
+    const hik = new HikCentralClient()
+
+    const page = parseInt(request.query.page) || 1
+    const limit = Math.min(parseInt(request.query.limit) || 50, 200)
+    const search = request.query.search || ''
+    const direction = request.query.direction || ''
+    const lotCode = request.query.parkingLot || ''
+    const hoursBack = parseInt(request.query.hours) || 1
+
+    const now = new Date()
+    const startDate = new Date(now.getTime() - hoursBack * 3600000)
+    const startTime = isoLocal(startDate)
+    const endTime = isoLocal(now)
+
+    const lots = lotCode
+      ? [{ parkingLotIndexCode: lotCode }]
+      : await ParkingLot.find().lean()
+
+    const allRecords = []
+    const seenGuids = new Set()
+
+    for (const lot of lots) {
+      const code = lot.parkingLotIndexCode || lot.parkingLotId
+      try {
+        const pr = await hik.getPassagewayRecords(code, startTime, endTime)
+        const records = pr?.data?.list || []
+        for (const rec of records) {
+          if (seenGuids.has(rec.guid)) continue
+          seenGuids.add(rec.guid)
+
+          const car = rec.carInfo || {}
+          const lane = rec.laneInfo || {}
+          const plate = (car.plateLicense || '').toUpperCase().replace(/\s+/g, '').trim()
+
+          if (search && !plate.includes(search.toUpperCase().replace(/\s+/g, ''))) continue
+          if (direction && lane.direction !== (direction === 'entry' ? 1 : 2)) continue
+
+          const existingSession = await VehicleSession.findOne({
+            plate,
+            status: { $in: ['active', 'unpaid'] },
+          })
+
+          allRecords.push({
+            guid: rec.guid,
+            plate: plate || 'Unknown',
+            parkingLotName: rec.parkingLotInfo?.parkingLotName || '',
+            passagewayName: rec.passagewayInfo?.passagewayName || '',
+            laneName: lane.laneName || '',
+            laneIndexCode: lane.laneIndexCode || '',
+            direction: lane.direction === 1 ? 'entry' : 'exit',
+            enterTime: car.EnterTime || null,
+            exitTime: car.ExitTime || null,
+            imageUrl: car.ImageUrl || '',
+            allowType: rec.allowType,
+            allowResult: rec.allowResult,
+            hasActiveSession: !!existingSession,
+            sessionId: existingSession?._id?.toString() || '',
+            sessionStatus: existingSession?.status || '',
+          })
+        }
+      } catch (e) {
+        req.log.warn({ lotCode: code, err: e.message }, 'Failed to fetch passageway records')
+      }
+    }
+
+    const total = allRecords.length
+    const paginated = allRecords.slice((page - 1) * limit, page * limit)
+
+    return reply.send({
+      success: true,
+      records: paginated,
+      total,
+      page,
+      totalPages: Math.ceil(total / limit),
+      query: { startTime, endTime, lotCount: lots.length, hoursBack },
+    })
+  })
+
+  app.post('/create-sessions-from-passageway', async (request, reply) => {
+    const { HikCentralClient } = require('../services/HikCentralClient')
+    const { isoLocal } = require('../utils/dateUtils')
+    const { processAnprEvent } = require('../services/EventProcessor')
+    const { broadcastActiveSessions } = require('../services/WebSocketManager')
+    const hik = new HikCentralClient()
+
+    const { parkingLot, hours = 1, direction: dirFilter, createOnlyNew = true } = request.body || {}
+    const hoursBack = parseInt(hours) || 1
+
+    const now = new Date()
+    const startDate = new Date(now.getTime() - hoursBack * 3600000)
+    const startTime = isoLocal(startDate)
+    const endTime = isoLocal(now)
+
+    const lots = parkingLot
+      ? [{ parkingLotIndexCode: parkingLot }]
+      : await ParkingLot.find().lean()
+
+    const created = []
+    const skipped = []
+    const errors = []
+    const seenPlates = new Set()
+
+    for (const lot of lots) {
+      const code = lot.parkingLotIndexCode || lot.parkingLotId
+      try {
+        const pr = await hik.getPassagewayRecords(code, startTime, endTime)
+        const records = pr?.data?.list || []
+        for (const rec of records) {
+          const car = rec.carInfo || {}
+          const lane = rec.laneInfo || {}
+          const plate = (car.plateLicense || '').toUpperCase().replace(/\s+/g, '').trim()
+          if (!plate || plate === 'UNKNOWN' || seenPlates.has(plate)) continue
+          seenPlates.add(plate)
+
+          if (dirFilter) {
+            const recDir = lane.direction === 1 ? 'entry' : 'exit'
+            if (recDir !== dirFilter) {
+              skipped.push({ plate, reason: `Direction mismatch: ${recDir}` })
+              continue
+            }
+          }
+
+          if (createOnlyNew) {
+            const existing = await VehicleSession.findOne({ plate, status: { $in: ['active', 'unpaid'] } })
+            if (existing) {
+              skipped.push({ plate, reason: 'Already has active/unpaid session', sessionId: existing._id })
+              continue
+            }
+          }
+
+          const eventTime = lane.direction === 2 && car.ExitTime
+            ? car.ExitTime
+            : (car.EnterTime || now.toISOString())
+
+          const result = await processAnprEvent({
+            plateNumber: plate,
+            cameraId: lane.laneIndexCode || '',
+            eventTime,
+          })
+
+          if (result && result.session) {
+            created.push({ plate, action: result.action, sessionId: result.session._id })
+          } else if (result) {
+            skipped.push({ plate, reason: result.reason || result.action })
+          } else {
+            errors.push({ plate, reason: 'processAnprEvent returned null' })
+          }
+        }
+      } catch (e) {
+        errors.push({ lotCode: code, reason: e.message })
+      }
+    }
+
+    broadcastActiveSessions()
+
+    return reply.send({
+      success: true,
+      summary: { created: created.length, skipped: skipped.length, errors: errors.length },
+      created,
+      skipped,
+      errors,
+      query: { startTime, endTime, lotCount: lots.length, hoursBack },
+    })
   })
 
 }

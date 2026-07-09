@@ -1,8 +1,14 @@
 const { processAnprEvent } = require('../services/EventProcessor')
 const { EventLog } = require('../models/EventLog')
 const { RawEvent } = require('../models/RawEvent')
+const { HikCentralClient } = require('../services/HikCentralClient')
+const { Camera } = require('../models/Camera')
+const { ParkingLot } = require('../models/ParkingLot')
 const { logger } = require('../utils/logger')
+const { isoLocal } = require('../utils/dateUtils')
 const { broadcastNewEvent, broadcastActiveSessions, broadcastRawEvent } = require('../services/WebSocketManager')
+
+const hik = new HikCentralClient()
 
 async function eventRoutes(app) {
   app.post('/eventsRCV', async (request, reply) => {
@@ -35,11 +41,42 @@ async function eventRoutes(app) {
         return reply.status(200).send({ code: '0', msg: 'success' })
       }
 
-      logger.info({ count: events.length, first: events[0] }, 'Processing events')
+      let processedCount = 0
+
       for (const evt of events) {
-        if (!evt.plateNumber) continue
-        const result = await processAnprEvent(evt)
-        if (result) updateLog(result, rawBody)
+        if (evt.plateNumber) {
+          const result = await processAnprEvent(evt)
+          if (result) updateLog(result, rawBody)
+          processedCount++
+          continue
+        }
+
+        if (evt.needsFallback && evt.cameraName) {
+          const fallbackVehicles = await fetchPassagewayRecords(evt.cameraName, evt.eventTime || new Date().toISOString())
+          logger.info({ cameraName: evt.cameraName, found: fallbackVehicles.length }, 'Fallback passageway records')
+
+          for (const veh of fallbackVehicles) {
+            if (!veh.plateNumber) continue
+            const vehEvent = {
+              plateNumber: veh.plateNumber,
+              cameraId: veh.cameraId || '',
+              cameraName: evt.cameraName,
+              eventTime: veh.eventTime || evt.eventTime || new Date().toISOString(),
+            }
+            const result = await processAnprEvent(vehEvent)
+            if (result) updateLog(result, rawBody)
+            processedCount++
+          }
+          continue
+        }
+
+        logger.warn({ evt }, 'Event has no plate and no fallback available, skipped')
+        await saveDroppedEvent(rawBody, evt.plateNumber || '', 'Event has no plate number', evt.cameraId || '', evt.cameraName || '')
+      }
+
+      if (processedCount === 0) {
+        logger.warn({ count: events.length }, 'No events were processed')
+        await saveDroppedEvent(rawBody, '', 'All events skipped — no plates found', '', '')
       }
 
       return reply.status(200).send({ code: '0', msg: 'success' })
@@ -51,8 +88,6 @@ async function eventRoutes(app) {
 }
 
 function extractEvents(rawBody) {
-  // Format 1: HikCentral OnEventNotify with params.events
-  // { method: "OnEventNotify", params: { ability: "event_veh", events: [...], sendTime: "..." } }
   if (rawBody && rawBody.params && rawBody.params.events && Array.isArray(rawBody.params.events)) {
     const results = []
     for (const evt of rawBody.params.events) {
@@ -62,18 +97,17 @@ function extractEvents(rawBody) {
         cameraId: evt.srcIndex || data.srcIndex || evt.sourceID || '',
         cameraName: evt.srcName || data.srcName || '',
         eventTime: rawBody.params.sendTime || evt.eventTime || new Date().toISOString(),
+        needsFallback: false,
       })
     }
     return results
   }
 
-  // Format 2: Simplified { eventData: { plateNumber, cameraId } }
   const eventData = rawBody && (rawBody.eventData || rawBody.data)
   if (eventData && eventData.plateNumber && eventData.cameraId) {
     return [eventData]
   }
 
-  // Format 3: Array of events { events: [...] }
   if (rawBody && rawBody.events && Array.isArray(rawBody.events)) {
     const results = []
     for (const evt of rawBody.events) {
@@ -85,17 +119,14 @@ function extractEvents(rawBody) {
     return results
   }
 
-  // Format 4: List { list: [...] }
   if (rawBody && rawBody.list && Array.isArray(rawBody.list)) {
     return rawBody.list
   }
 
-  // Format 5: String body (combined alarm notification from HikCentral)
   if (typeof rawBody === 'string') {
     return extractFromStringEvent(rawBody)
   }
 
-  // Format 6: Single event object with plateNumber + cameraId at top level
   if (rawBody && rawBody.plateNumber && rawBody.cameraId) {
     return [rawBody]
   }
@@ -117,7 +148,77 @@ function extractFromStringEvent(rawString) {
     cameraName,
     eventTime: new Date().toISOString(),
     rawString,
+    needsFallback: !plate,
   }]
+}
+
+async function fetchPassagewayRecords(cameraName, eventTime) {
+  const results = []
+  const now = new Date()
+  const windowStart = new Date(now.getTime() - 15 * 60000)
+  const windowEnd = new Date(now.getTime() + 5 * 60000)
+  const startTime = isoLocal(windowStart)
+  const endTime = isoLocal(windowEnd)
+
+  logger.info({ cameraName, startTime, endTime, serverTime: isoLocal(now) }, 'Fetching passageway records — wide window for clock skew')
+
+  let targetLots = []
+
+  const strippedName = cameraName.replace(/^ANPR\s+/i, '').trim()
+  const safeName = cameraName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const safeStripped = strippedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+  let cam = await Camera.findOne({
+    name: { $regex: safeName, $options: 'i' },
+  })
+  if (!cam) {
+    cam = await Camera.findOne({
+      name: { $regex: safeStripped, $options: 'i' },
+    })
+  }
+
+  if (cam && cam.areaId) {
+    targetLots = await ParkingLot.find({ parkingLotId: cam.areaId }).lean()
+  }
+
+  if (targetLots.length === 0) {
+    targetLots = await ParkingLot.find().lean()
+  }
+
+  logger.info({ cameraName, lotCount: targetLots.length, startTime, endTime }, 'Fetching passageway records for fallback')
+
+  const seenPlates = new Set()
+
+  for (const lot of targetLots) {
+    const lotCode = lot.parkingLotIndexCode || lot.parkingLotId
+    try {
+      const pr = await hik.getPassagewayRecords(lotCode, startTime, endTime)
+      const records = pr?.data?.list || []
+
+      for (const rec of records) {
+        const car = rec.carInfo
+        if (!car || !car.plateLicense || car.plateLicense === 'Unknown') continue
+        const plate = car.plateLicense.toUpperCase().replace(/\s+/g, '').trim()
+        if (seenPlates.has(plate)) continue
+        seenPlates.add(plate)
+
+        const laneDir = rec.laneInfo?.direction
+        const eventTime = laneDir === 2 && car.ExitTime
+          ? car.ExitTime
+          : (car.EnterTime || now.toISOString())
+
+        results.push({
+          plateNumber: plate,
+          cameraId: rec.laneInfo?.laneIndexCode || '',
+          eventTime,
+        })
+      }
+    } catch (e) {
+      logger.warn({ lotCode, err: e.message }, 'Failed to fetch passageway records')
+    }
+  }
+
+  return results
 }
 
 async function updateLog(result, rawBody) {

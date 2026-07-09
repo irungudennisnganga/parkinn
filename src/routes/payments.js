@@ -13,10 +13,24 @@ const hik = new HikCentralClient()
 async function paymentRoutes(app) {
   app.get('/fee/:plate', async (request, reply) => {
     const plate = request.params.plate.toUpperCase()
-    const session = await VehicleSession.findOne({ plate, status: { $in: ['active', 'unpaid'] } })
-      .sort({ entryTime: -1 })
+    const oneDayAgo = new Date(Date.now() - 24 * 3600000)
+
+    const session = await VehicleSession.findOne({
+      plate,
+      status: { $in: ['active', 'unpaid'] },
+      entryTime: { $gte: oneDayAgo },
+    }).sort({ entryTime: -1 })
+
     if (!session) {
-      return reply.status(404).send({ error: 'No active session found for this plate' })
+      const oldSession = await VehicleSession.findOne({ plate, status: { $in: ['active', 'unpaid'] } })
+      if (oldSession) {
+        oldSession.status = 'exited'
+        oldSession.exitTime = oldSession.exitTime || new Date(oldSession.entryTime.getTime() + 3600000)
+        oldSession.exitCamera = oldSession.exitCamera || oldSession.entryCamera
+        await oldSession.save()
+        logger.info({ plate, sessionId: oldSession._id, entryTime: oldSession.entryTime }, 'Auto-closed stale session during fee lookup')
+      }
+      return reply.status(404).send({ error: 'No recent active session found for this plate' })
     }
 
     const now = new Date()
@@ -41,10 +55,14 @@ async function paymentRoutes(app) {
       return reply.status(400).send({ error: 'Plate number required' })
     }
 
-    const session = await VehicleSession.findOne({ plate: plate.toUpperCase(), status: { $in: ['active', 'unpaid'] } })
-      .sort({ entryTime: -1 })
+    const oneDayAgo = new Date(Date.now() - 24 * 3600000)
+    const session = await VehicleSession.findOne({
+      plate: plate.toUpperCase(),
+      status: { $in: ['active', 'unpaid'] },
+      entryTime: { $gte: oneDayAgo },
+    }).sort({ entryTime: -1 })
     if (!session) {
-      return reply.status(404).send({ error: 'No active session found for this plate' })
+      return reply.status(404).send({ error: 'No recent active session found for this plate' })
     }
 
     const { amount, rateDescription } = await calculateCharge(session.entryTime, new Date(), session.entryCamera)
@@ -110,10 +128,14 @@ async function paymentRoutes(app) {
       return reply.status(400).send({ error: 'plate required' })
     }
 
-    const session = await VehicleSession.findOne({ plate, status: { $in: ['active', 'unpaid'] } })
-      .sort({ entryTime: -1 })
+    const oneDayAgo = new Date(Date.now() - 24 * 3600000)
+    const session = await VehicleSession.findOne({
+      plate,
+      status: { $in: ['active', 'unpaid'] },
+      entryTime: { $gte: oneDayAgo },
+    }).sort({ entryTime: -1 })
     if (!session) {
-      return reply.status(404).send({ error: 'No active/unpaid session found for this plate' })
+      return reply.status(404).send({ error: 'No recent active/unpaid session found for this plate' })
     }
 
     session.status = 'paid'

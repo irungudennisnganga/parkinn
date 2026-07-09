@@ -15,24 +15,7 @@ async function paymentRoutes(app) {
     const plate = request.params.plate.toUpperCase()
     const session = await VehicleSession.findOne({ plate, status: { $in: ['active', 'unpaid'] } })
       .sort({ entryTime: -1 })
-
     if (!session) {
-      const now = new Date()
-      const hikEntry = await findLatestHikEntryForPlate(plate)
-      if (hikEntry) {
-        const { amount, rateDescription } = await calculateCharge(hikEntry.enterTime, now, hikEntry.cameraId || '')
-        return reply.send({
-          plate,
-          entryTime: hikEntry.enterTime,
-          calculatedAt: now,
-          source: 'hikcentral',
-          durationHours: Math.round(((now.getTime() - new Date(hikEntry.enterTime).getTime()) / 3600000) * 100) / 100,
-          chargeAmount: amount,
-          rateDescription,
-          status: 'unpaid',
-          paymentRef: '',
-        })
-      }
       return reply.status(404).send({ error: 'No active session found for this plate' })
     }
 

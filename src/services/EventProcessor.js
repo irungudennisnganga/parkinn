@@ -121,6 +121,21 @@ async function isInternalFloorCamera(cameraId) {
   return area.parentId != null
 }
 
+async function getCameraFloorInfo(cameraId) {
+  if (!cameraId) return { cameraName: '', floor: 'Unknown', floorType: 'unknown' }
+  const { Area } = require('../models/Area')
+  const cam = await Camera.findOne({
+    $or: [{ cameraId }, { indexCode: cameraId }],
+  })
+  if (!cam) return { cameraName: cameraId, floor: 'Unknown', floorType: 'unknown' }
+  const area = cam.areaId ? await Area.findOne({ areaId: cam.areaId }) : null
+  return {
+    cameraName: cam.name || cameraId,
+    floor: area?.name || 'Unknown',
+    floorType: area?.areaType || 'unknown',
+  }
+}
+
 async function isBuildingExitCamera(cameraId) {
   if (!cameraId) return false
   const cam = await Camera.findOne({
@@ -210,11 +225,27 @@ async function handleEntry(event, plate, cameraId, eventTime) {
       activeSession.entryCamera = cameraId
       const barrier = await findBarrierForCamera(cameraId)
       activeSession.entryBarrier = barrier?.barrierId || cameraId
+
+      const floorInfo = await getCameraFloorInfo(cameraId)
+      activeSession.floorLog = activeSession.floorLog || []
+      activeSession.floorLog.push({
+        cameraId,
+        cameraName: floorInfo.cameraName,
+        floor: floorInfo.floor,
+        floorType: floorInfo.floorType,
+        timestamp: entryDate,
+        action: 'floor_change',
+      })
+
       await activeSession.save()
       broadcastSessionUpdate(activeSession)
-      logger.info({ plate, cameraId, sessionId: activeSession._id, prevCamera: cameraId }, 'Vehicle moved to different floor — entry camera updated')
-      try { await openBarrierByCamera(cameraId) } catch (_) {}
-      return { action: 'floor_change', reason: 'Vehicle moved to different floor — entry camera updated', session: activeSession }
+      logger.info({ plate, cameraId, sessionId: activeSession._id, floor: floorInfo.floor }, 'Vehicle moved to different floor — entry camera updated')
+
+      const isInternal = await isInternalFloorCamera(cameraId)
+      if (!isInternal) {
+        try { await openBarrierByCamera(cameraId) } catch (_) {}
+      }
+      return { action: 'floor_change', reason: `Vehicle moved to ${floorInfo.floor}`, session: activeSession }
     }
   }
 
@@ -234,6 +265,7 @@ async function handleEntry(event, plate, cameraId, eventTime) {
   const barrierId = barrier?.barrierId || cameraId
 
   try {
+    const floorInfo = await getCameraFloorInfo(cameraId)
     const session = await VehicleSession.create({
       plate,
       entryTime: entryDate,
@@ -241,6 +273,14 @@ async function handleEntry(event, plate, cameraId, eventTime) {
       entryBarrier: barrierId,
       isKnown,
       status: 'active',
+      floorLog: [{
+        cameraId,
+        cameraName: floorInfo.cameraName,
+        floor: floorInfo.floor,
+        floorType: floorInfo.floorType,
+        timestamp: entryDate,
+        action: 'entry',
+      }],
     })
     logger.info({ plate, cameraId, sessionId: session._id, barrierId }, 'Vehicle entry session created')
     broadcastNewSession(session)
@@ -294,11 +334,27 @@ async function handleExit(event, plate, cameraId, eventTime) {
     session.entryCamera = cameraId
     const barrier = await findBarrierForCamera(cameraId)
     session.entryBarrier = barrier?.barrierId || cameraId
+
+    const floorInfo = await getCameraFloorInfo(cameraId)
+    session.floorLog = session.floorLog || []
+    session.floorLog.push({
+      cameraId,
+      cameraName: floorInfo.cameraName,
+      floor: floorInfo.floor,
+      floorType: floorInfo.floorType,
+      timestamp: exitDate,
+      action: 'floor_change',
+    })
+
     await session.save()
     broadcastSessionUpdate(session)
-    logger.info({ plate, cameraId, sessionId: session._id }, 'Exit on internal floor camera — treating as floor movement')
-    try { await openBarrierByCamera(cameraId) } catch (_) {}
-    return { action: 'floor_change', reason: 'Exit on internal floor — entry camera updated (not building exit)', session }
+    logger.info({ plate, cameraId, sessionId: session._id, floor: floorInfo.floor }, 'Exit on internal floor camera — treating as floor movement')
+
+    const isInternal = await isInternalFloorCamera(cameraId)
+    if (!isInternal) {
+      try { await openBarrierByCamera(cameraId) } catch (_) {}
+    }
+    return { action: 'floor_change', reason: `Moved to ${floorInfo.floor} (internal floor — not building exit)`, session }
   }
 
   const registered = await RegisteredVehicle.findOne({ plate, isActive: true })

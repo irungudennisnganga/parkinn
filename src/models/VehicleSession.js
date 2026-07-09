@@ -1,5 +1,14 @@
 const { Schema, model } = require('mongoose')
 
+const floorLogEntrySchema = new Schema({
+  cameraId: { type: String },
+  cameraName: { type: String },
+  floor: { type: String },
+  floorType: { type: String },
+  timestamp: { type: Date },
+  action: { type: String, enum: ['entry', 'floor_change'] },
+}, { _id: false })
+
 const vehicleSessionSchema = new Schema({
   plate: { type: String, required: true, index: true },
   entryTime: { type: Date, required: true },
@@ -13,6 +22,7 @@ const vehicleSessionSchema = new Schema({
   chargeRate: { type: String, default: '' },
   hikCentralFeeData: { type: Schema.Types.Mixed, default: null },
   paymentRef: { type: String, default: '' },
+  floorLog: { type: [floorLogEntrySchema], default: [] },
   status: {
     type: String,
     enum: ['active', 'paid', 'unpaid', 'exited'],

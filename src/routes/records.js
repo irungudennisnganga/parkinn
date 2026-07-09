@@ -100,6 +100,14 @@ async function recordRoutes(app) {
           paymentRef: s.paymentRef,
           status: s.status,
           isKnown: s.isKnown,
+          floorLog: (s.floorLog || []).map(e => ({
+            cameraId: e.cameraId,
+            cameraName: e.cameraName,
+            floor: e.floor,
+            floorType: e.floorType,
+            timestamp: e.timestamp,
+            action: e.action,
+          })),
         })),
         recentRecords: recent,
       })

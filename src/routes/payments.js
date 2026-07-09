@@ -193,30 +193,7 @@ async function paymentRoutes(app) {
     await session.save()
     broadcastSessionUpdate(session)
 
-    // const fee = session.chargeAmount || 0
-
-    // const cameraId = session.exitCamera || session.entryCamera
-    const currentCamera = await Camera.findOne({
-      $or: [{ cameraId }, { indexCode: cameraId }],
-    })
-    let isInternalFloor = false
-    if (currentCamera && currentCamera.areaId) {
-      const area = await Area.findOne({ areaId: currentCamera.areaId })
-      if (area) {
-        const floorMatch = area.name.match(/Floor\s*(\d+)/i) || area.name.match(/(\d+)(?:st|nd|rd|th)?\s*Floor/i)
-        if (floorMatch) {
-          isInternalFloor = parseInt(floorMatch[1]) > 1
-        } else {
-          isInternalFloor = area.parentId != null
-        }
-      }
-    }
-
-    if (isInternalFloor) {
-      logger.info({ plate, cameraId, currentFloor: currentCamera?.name || cameraId },
-        'Payment confirmed — car on internal floor, not opening barrier; will auto-open at building exit')
-      return reply.send({ success: true, plate, fee, message: 'Payment confirmed. Drive to building exit — barrier will open automatically.' })
-    }
+    const cameraId = session.exitCamera || session.entryCamera
 
     try {
       const confirm = await hik.confirmParkingFee(plate, fee, 1)
@@ -232,7 +209,6 @@ async function paymentRoutes(app) {
       logger.warn({ plate, err: err.message }, 'HikCentral confirm failed, trying barrier fallback')
     }
 
-    const cameraId = session.exitCamera || session.entryCamera
     if (cameraId) {
       const result = await openBarrierByCamera(cameraId)
       session.status = 'exited'

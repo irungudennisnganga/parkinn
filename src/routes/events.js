@@ -146,7 +146,6 @@ async function eventRoutes(app) {
           } catch (err) {
             logger.warn({ err: err.message }, 'Failed to pull event records')
           }
-        }
         } else {
           await saveDroppedEvent(rawBody, '', 'Could not parse string event — no plate or camera name found', '', '')
         }

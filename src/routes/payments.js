@@ -1,36 +1,41 @@
 const { VehicleSession } = require('../models/VehicleSession')
 const { RegisteredVehicle } = require('../models/RegisteredVehicle')
 const { Camera } = require('../models/Camera')
+const { ParkingLot } = require('../models/ParkingLot')
 const { initiateStkPush } = require('../services/PaymentService')
 const { calculateCharge } = require('../services/ParkingLogic')
 const { openBarrierByCamera, findBarrierForCamera } = require('../services/BarrierControl')
 const { HikCentralClient } = require('../services/HikCentralClient')
 const { broadcastSessionUpdate } = require('../services/WebSocketManager')
 const { logger } = require('../utils/logger')
+const { isoLocal } = require('../utils/dateUtils')
 
 const hik = new HikCentralClient()
 
 async function paymentRoutes(app) {
   app.get('/fee/:plate', async (request, reply) => {
     const plate = request.params.plate.toUpperCase()
-    const oneDayAgo = new Date(Date.now() - 24 * 3600000)
-
-    const session = await VehicleSession.findOne({
-      plate,
-      status: { $in: ['active', 'unpaid'] },
-      entryTime: { $gte: oneDayAgo },
-    }).sort({ entryTime: -1 })
+    const session = await VehicleSession.findOne({ plate, status: { $in: ['active', 'unpaid'] } })
+      .sort({ entryTime: -1 })
 
     if (!session) {
-      const oldSession = await VehicleSession.findOne({ plate, status: { $in: ['active', 'unpaid'] } })
-      if (oldSession) {
-        oldSession.status = 'exited'
-        oldSession.exitTime = oldSession.exitTime || new Date(oldSession.entryTime.getTime() + 3600000)
-        oldSession.exitCamera = oldSession.exitCamera || oldSession.entryCamera
-        await oldSession.save()
-        logger.info({ plate, sessionId: oldSession._id, entryTime: oldSession.entryTime }, 'Auto-closed stale session during fee lookup')
+      const now = new Date()
+      const hikEntry = await findLatestHikEntryForPlate(plate)
+      if (hikEntry) {
+        const { amount, rateDescription } = await calculateCharge(hikEntry.enterTime, now, hikEntry.cameraId || '')
+        return reply.send({
+          plate,
+          entryTime: hikEntry.enterTime,
+          calculatedAt: now,
+          source: 'hikcentral',
+          durationHours: Math.round(((now.getTime() - new Date(hikEntry.enterTime).getTime()) / 3600000) * 100) / 100,
+          chargeAmount: amount,
+          rateDescription,
+          status: 'unpaid',
+          paymentRef: '',
+        })
       }
-      return reply.status(404).send({ error: 'No recent active session found for this plate' })
+      return reply.status(404).send({ error: 'No active session found for this plate' })
     }
 
     const now = new Date()
@@ -55,14 +60,10 @@ async function paymentRoutes(app) {
       return reply.status(400).send({ error: 'Plate number required' })
     }
 
-    const oneDayAgo = new Date(Date.now() - 24 * 3600000)
-    const session = await VehicleSession.findOne({
-      plate: plate.toUpperCase(),
-      status: { $in: ['active', 'unpaid'] },
-      entryTime: { $gte: oneDayAgo },
-    }).sort({ entryTime: -1 })
+    const session = await VehicleSession.findOne({ plate: plate.toUpperCase(), status: { $in: ['active', 'unpaid'] } })
+      .sort({ entryTime: -1 })
     if (!session) {
-      return reply.status(404).send({ error: 'No recent active session found for this plate' })
+      return reply.status(404).send({ error: 'No active session found for this plate' })
     }
 
     const { amount, rateDescription } = await calculateCharge(session.entryTime, new Date(), session.entryCamera)
@@ -128,14 +129,10 @@ async function paymentRoutes(app) {
       return reply.status(400).send({ error: 'plate required' })
     }
 
-    const oneDayAgo = new Date(Date.now() - 24 * 3600000)
-    const session = await VehicleSession.findOne({
-      plate,
-      status: { $in: ['active', 'unpaid'] },
-      entryTime: { $gte: oneDayAgo },
-    }).sort({ entryTime: -1 })
+    const session = await VehicleSession.findOne({ plate, status: { $in: ['active', 'unpaid'] } })
+      .sort({ entryTime: -1 })
     if (!session) {
-      return reply.status(404).send({ error: 'No recent active/unpaid session found for this plate' })
+      return reply.status(404).send({ error: 'No active/unpaid session found for this plate' })
     }
 
     session.status = 'paid'
@@ -173,6 +170,39 @@ async function paymentRoutes(app) {
 
     return reply.send({ success: true, plate, message: 'Marked as paid — exit on next ANPR detection' })
   })
+}
+
+async function findLatestHikEntryForPlate(plate) {
+  try {
+    const now = new Date()
+    const startTime = isoLocal(new Date(now.getTime() - 7 * 24 * 3600000))
+    const endTime = isoLocal(now)
+
+    const lots = await ParkingLot.find().lean()
+    for (const lot of lots) {
+      const lotCode = lot.parkingLotIndexCode || lot.parkingLotId
+      try {
+        const pr = await hik.getPassagewayRecords(lotCode, startTime, endTime)
+        const records = pr?.data?.list || []
+        for (const rec of records) {
+          const car = rec.carInfo || {}
+          const recPlate = (car.plateLicense || '').toUpperCase().replace(/\s+/g, '').trim()
+          if (recPlate !== plate) continue
+          const lane = rec.laneInfo || {}
+          if (lane.direction !== 1) continue
+          return {
+            enterTime: new Date(car.EnterTime || now.toISOString()),
+            cameraId: lane.laneIndexCode || '',
+          }
+        }
+      } catch (e) {
+        logger.warn({ lotCode, err: e.message }, 'HikCentral fallback: failed to fetch passageway records')
+      }
+    }
+  } catch (e) {
+    logger.warn({ plate, err: e.message }, 'HikCentral fallback failed')
+  }
+  return null
 }
 
 module.exports = { paymentRoutes }

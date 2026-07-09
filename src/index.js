@@ -25,7 +25,14 @@ async function createApp() {
     },
   })
 
-  await app.register(cors, { origin: true })
+  await app.register(cors, {
+    origin: (origin, cb) => {
+      cb(null, true)
+    },
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  })
   await app.register(websocketPlugin)
   await connectMongo()
 

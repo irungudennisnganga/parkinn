@@ -1,8 +1,9 @@
 const { VehicleSession } = require('../models/VehicleSession')
 const { RegisteredVehicle } = require('../models/RegisteredVehicle')
+const { Camera } = require('../models/Camera')
 const { initiateStkPush } = require('../services/PaymentService')
 const { calculateCharge } = require('../services/ParkingLogic')
-const { openBarrierByCamera } = require('../services/BarrierControl')
+const { openBarrierByCamera, findBarrierForCamera } = require('../services/BarrierControl')
 const { HikCentralClient } = require('../services/HikCentralClient')
 const { broadcastSessionUpdate } = require('../services/WebSocketManager')
 const { logger } = require('../utils/logger')
@@ -127,20 +128,23 @@ async function paymentRoutes(app) {
         broadcastSessionUpdate(session)
         return reply.send({ success: true, plate, fee, message: 'Payment confirmed, barrier opened via HikCentral' })
       }
+      logger.warn({ plate, code: confirm?.code }, 'HikCentral confirm returned non-zero code')
     } catch (err) {
-      logger.warn({ plate, err: err.message }, 'HikCentral confirm failed, trying fallback')
+      logger.warn({ plate, err: err.message }, 'HikCentral confirm failed, trying barrier fallback')
     }
 
-    if (session.exitCamera) {
-      const result = await openBarrierByCamera(session.exitCamera)
+    const cameraId = session.exitCamera || session.entryCamera
+    if (cameraId) {
+      const result = await openBarrierByCamera(cameraId)
       session.status = 'exited'
       session.exitTime = new Date()
+      session.exitCamera = session.exitCamera || cameraId
       await session.save()
       broadcastSessionUpdate(session)
-      return reply.send({ success: result.success, plate, method: result.method, message: 'Barrier opened via fallback' })
+      return reply.send({ success: result.success, plate, method: result.method, message: 'Barrier opened via camera fallback' })
     }
 
-    return reply.send({ success: true, plate, message: 'Marked as paid, no exit camera recorded' })
+    return reply.send({ success: true, plate, message: 'Marked as paid — exit on next ANPR detection' })
   })
 }
 

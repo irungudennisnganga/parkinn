@@ -59,14 +59,18 @@ async function mpesaRoutes(app) {
       }
 
       // Step 2: Fallback to camera-based barrier open
-      if (session?.exitCamera) {
-        await openBarrierByCamera(session.exitCamera)
+      const cameraId = session?.exitCamera || session?.entryCamera
+      if (session && cameraId) {
+        await openBarrierByCamera(cameraId)
         session.exitTime = new Date()
         session.status = 'exited'
+        if (!session.exitCamera) session.exitCamera = cameraId
         await session.save()
         broadcastSessionUpdate(session)
+        logger.info({ plate, amount, fee: feeToConfirm }, 'Payment reconciled, barrier opened via fallback')
+      } else if (session) {
+        logger.info({ plate, amount, fee: feeToConfirm }, 'Payment reconciled — exit on next ANPR detection')
       }
-      logger.info({ plate, amount, fee: feeToConfirm }, 'Payment reconciled, barrier opened via fallback')
 
       return reply.status(200).send({ ResultCode: 0, ResultDesc: 'Success' })
     } catch (err) {

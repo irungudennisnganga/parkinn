@@ -469,7 +469,7 @@ function formatDuration(seconds) {
   if (h > 0) parts.push(`${h}h`)
   if (m > 0) parts.push(`${m}m`)
   return parts.join(' ') || '<1m'
-  fastify.get('/raw-events', async (request, reply) => {
+  app.get('/raw-events', async (request, reply) => {
     const { RawEvent } = require('../models/RawEvent')
     const page = parseInt(request.query.page) || 1
     const limit = Math.min(parseInt(request.query.limit) || 50, 200)
@@ -488,7 +488,7 @@ function formatDuration(seconds) {
     return reply.send({ success: true, events, total, page, totalPages: Math.ceil(total / limit) })
   })
 
-  fastify.post('/raw-events/cleanup', async (request, reply) => {
+  app.post('/raw-events/cleanup', async (request, reply) => {
     const { RawEvent } = require('../models/RawEvent')
     const daysOld = parseInt(request.query.days) || 7
     const cutoff = new Date(Date.now() - daysOld * 86400000)

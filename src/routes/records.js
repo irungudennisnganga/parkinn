@@ -4,100 +4,109 @@ const { RegisteredVehicle } = require('../models/RegisteredVehicle')
 const { logger } = require('../utils/logger')
 
 async function recordRoutes(app) {
-  app.get('/', async (request) => {
-    const page = parseInt(request.query.page) || 1
-    const limit = Math.min(parseInt(request.query.limit) || 20, 100)
-    const skip = (page - 1) * limit
-    const search = request.query.search || ''
-    const direction = request.query.direction || ''
+  app.get('/', async (request, reply) => {
+    try {
+      const page = parseInt(request.query.page) || 1
+      const limit = Math.min(parseInt(request.query.limit) || 20, 100)
+      const skip = (page - 1) * limit
+      const search = request.query.search || ''
+      const direction = request.query.direction || ''
 
-    const filter = {}
-    if (search) {
-      filter.plate = { $regex: search.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' }
-    }
-    if (direction && ['entry', 'exit'].includes(direction)) {
-      filter.direction = direction
-    }
+      const filter = {}
+      if (search) {
+        filter.plate = { $regex: search.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' }
+      }
+      if (direction && ['entry', 'exit'].includes(direction)) {
+        filter.direction = direction
+      }
 
-    const [records, total] = await Promise.all([
-      VehicleRecord.find(filter)
-        .sort({ enterTime: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
-      VehicleRecord.countDocuments(filter),
-    ])
+      const [records, total] = await Promise.all([
+        VehicleRecord.find(filter)
+          .sort({ enterTime: -1 })
+          .skip(skip)
+          .limit(limit)
+          .lean(),
+        VehicleRecord.countDocuments(filter),
+      ])
 
-    const formatted = records.map(r => ({
-      plate: r.plate,
-      direction: r.direction,
-      parkingLot: r.parkingLotName,
-      passageway: r.passagewayName,
-      lane: r.laneName,
-      enterTime: r.enterTime,
-      exitTime: r.exitTime,
-      duration: formatDuration(r.durationSeconds),
-      durationSeconds: r.durationSeconds,
-      allowed: r.allowed,
-      vehicleType: r.vehicleType,
-    }))
+      const formatted = records.map(r => ({
+        plate: r.plate,
+        direction: r.direction,
+        parkingLot: r.parkingLotName,
+        passageway: r.passagewayName,
+        lane: r.laneName,
+        enterTime: r.enterTime,
+        exitTime: r.exitTime,
+        duration: formatDuration(r.durationSeconds),
+        durationSeconds: r.durationSeconds,
+        allowed: r.allowed,
+        vehicleType: r.vehicleType,
+      }))
 
-    return {
-      records: formatted,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-        hasMore: skip + limit < total,
-      },
+      return reply.send({
+        success: true,
+        records: formatted,
+        pagination: {
+          page, limit, total,
+          totalPages: Math.ceil(total / limit),
+          hasMore: skip + limit < total,
+        },
+      })
+    } catch (err) {
+      logger.error({ err: err.message }, 'Error fetching vehicle records')
+      return reply.status(500).send({ success: false, error: 'Failed to fetch records' })
     }
   })
 
   app.get('/:plate', async (request, reply) => {
-    const plate = request.params.plate.toUpperCase()
+    try {
+      const plate = request.params.plate.toUpperCase()
 
-    const [records, sessions, registered] = await Promise.all([
-      VehicleRecord.find({ plate }).sort({ enterTime: -1 }).limit(50).lean(),
-      VehicleSession.find({ plate }).sort({ entryTime: -1 }).limit(20).lean(),
-      RegisteredVehicle.findOne({ plate }),
-    ])
+      const [records, sessions, registered] = await Promise.all([
+        VehicleRecord.find({ plate }).sort({ enterTime: -1 }).limit(50).lean(),
+        VehicleSession.find({ plate }).sort({ entryTime: -1 }).limit(20).lean(),
+        RegisteredVehicle.findOne({ plate }),
+      ])
 
-    const recent = records.map(r => ({
-      plate: r.plate,
-      direction: r.direction,
-      parkingLot: r.parkingLotName,
-      passageway: r.passagewayName,
-      lane: r.laneName,
-      enterTime: r.enterTime,
-      exitTime: r.exitTime,
-      duration: formatDuration(r.durationSeconds),
-      allowed: r.allowed,
-    }))
+      const recent = records.map(r => ({
+        plate: r.plate,
+        direction: r.direction,
+        parkingLot: r.parkingLotName,
+        passageway: r.passagewayName,
+        lane: r.laneName,
+        enterTime: r.enterTime,
+        exitTime: r.exitTime,
+        duration: formatDuration(r.durationSeconds),
+        allowed: r.allowed,
+      }))
 
-    return reply.send({
-      success: true,
-      plate,
-      isRegistered: !!registered,
-      registeredVehicle: registered ? {
-        plate: registered.plate,
-        ownerName: registered.ownerName,
-        unitNumber: registered.unitNumber,
-        phoneNumber: registered.phoneNumber,
-        floorAccess: registered.floorAccess,
-        isActive: registered.isActive,
-      } : null,
-      sessions: sessions.map(s => ({
-        plate: s.plate,
-        entryTime: s.entryTime,
-        exitTime: s.exitTime,
-        chargeAmount: s.chargeAmount,
-        paymentRef: s.paymentRef,
-        status: s.status,
-        isKnown: s.isKnown,
-      })),
-      recentRecords: recent,
-    })
+      return reply.send({
+        success: true,
+        plate,
+        isRegistered: !!registered,
+        registeredVehicle: registered ? {
+          plate: registered.plate,
+          ownerName: registered.ownerName,
+          unitNumber: registered.unitNumber,
+          phoneNumber: registered.phoneNumber,
+          floorAccess: registered.floorAccess,
+          isActive: registered.isActive,
+        } : null,
+        sessions: sessions.map(s => ({
+          plate: s.plate,
+          entryTime: s.entryTime,
+          exitTime: s.exitTime,
+          chargeAmount: s.chargeAmount,
+          paymentRef: s.paymentRef,
+          status: s.status,
+          isKnown: s.isKnown,
+        })),
+        recentRecords: recent,
+      })
+    } catch (err) {
+      logger.error({ plate: request.params.plate, err: err.message }, 'Error in vehicle detail')
+      return reply.status(500).send({ success: false, error: 'Failed to fetch vehicle records' })
+    }
   })
 }
 

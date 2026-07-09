@@ -47,6 +47,19 @@ async function paymentRoutes(app) {
     const now = new Date()
     const { amount, rateDescription } = await calculateCharge(session.entryTime, now, session.entryCamera)
 
+    let currentFloor = null
+    if (session.entryCamera) {
+      const cam = await Camera.findOne({
+        $or: [{ cameraId: session.entryCamera }, { indexCode: session.entryCamera }],
+      })
+      if (cam && cam.areaId) {
+        const area = await Area.findOne({ areaId: cam.areaId })
+        if (area) {
+          currentFloor = { name: area.name, type: area.areaType, cameraName: cam.name || session.entryCamera }
+        }
+      }
+    }
+
     return reply.send({
       plate,
       entryTime: session.entryTime,
@@ -56,6 +69,7 @@ async function paymentRoutes(app) {
       rateDescription,
       status: session.status,
       paymentRef: session.paymentRef || '',
+      currentFloor,
     })
   })
 

@@ -233,21 +233,20 @@ async function handleEntry(event, plate, cameraId, eventTime) {
   const activeSession = await VehicleSession.findOne({ plate, status: 'active' })
   if (activeSession) {
     const hoursSinceEntry = (entryDate.getTime() - activeSession.entryTime.getTime()) / 3600000
+    const isDifferentCamera = activeSession.entryCamera !== cameraId
 
-    if (hoursSinceEntry > 2) {
+    if (hoursSinceEntry > 1 && isDifferentCamera) {
       logger.info({ plate, sessionId: activeSession._id, hoursSinceEntry: Math.round(hoursSinceEntry), entryTime: activeSession.entryTime },
-        'Stale active session — auto-closing as exited and creating new session')
+        'Active session from different barrier is older than 1 hour — auto-closing and creating new session')
       activeSession.status = 'exited'
       activeSession.exitTime = new Date(activeSession.entryTime.getTime() + 3600000)
       activeSession.exitCamera = activeSession.entryCamera
       await activeSession.save()
       broadcastSessionUpdate(activeSession)
+    } else if (!isDifferentCamera) {
+      logger.info({ plate, cameraId, sessionId: activeSession._id }, 'Vehicle already has active session on this camera, skipping duplicate')
+      return { action: 'skip', reason: 'Active session already exists on same camera', session: null }
     } else {
-      if (activeSession.entryCamera === cameraId) {
-        logger.info({ plate, cameraId, sessionId: activeSession._id }, 'Vehicle already has active session on this camera, skipping duplicate')
-        return { action: 'skip', reason: 'Active session already exists on same camera', session: null }
-      }
-
       activeSession.entryCamera = cameraId
       const barrier = await findBarrierForCamera(cameraId)
       activeSession.entryBarrier = barrier?.barrierId || cameraId

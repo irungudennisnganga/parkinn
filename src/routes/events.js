@@ -1,23 +1,15 @@
 const { processAnprEvent } = require('../services/EventProcessor')
 const { EventLog } = require('../models/EventLog')
 const { RawEvent } = require('../models/RawEvent')
-const { HikCentralClient } = require('../services/HikCentralClient')
-const { Camera } = require('../models/Camera')
-const { ParkingLot } = require('../models/ParkingLot')
 const { logger } = require('../utils/logger')
-const { isoLocal } = require('../utils/dateUtils')
 const { broadcastNewEvent, broadcastActiveSessions, broadcastRawEvent } = require('../services/WebSocketManager')
-
-const hik = new HikCentralClient()
-const ANPR_EVENT_TYPES = [131329, 131330, 131331]
 
 async function eventRoutes(app) {
   app.post('/eventsRCV', async (request, reply) => {
     try {
-      const contentType = request.headers['content-type'] || ''
       const rawBody = request.body
 
-      logger.info({ contentType, bodyType: typeof rawBody }, 'Event received at /eventsRCV')
+      logger.info({ contentType: request.headers['content-type'] || '', bodyType: typeof rawBody }, 'Event received at /eventsRCV')
 
       try {
         await RawEvent.create({
@@ -35,195 +27,104 @@ async function eventRoutes(app) {
         logger.warn({ err: er.message }, 'Failed to save EventLog')
       }
 
-      // Handle string body (HikCentral combined alarm notification)
-      if (typeof rawBody === 'string') {
-        const parsed = parseStringEvent(rawBody)
-        logger.info({ parsed, rawLength: rawBody.length }, 'String event parsed')
-        if (parsed) {
-          logger.info({ parsed }, 'Combined alarm notification — pulling event data')
-          const now = new Date()
-          const windowMinsAgo = new Date(now - 15 * 60000)
-          const startTime = isoLocal(windowMinsAgo)
-          const endTime = isoLocal(now)
-          logger.info({ startTime, endTime }, 'Time window for event records search')
-          try {
-            let records = await hik.searchEventRecords(startTime, endTime, ANPR_EVENT_TYPES)
-            let events = records?.data?.list || []
-            logger.info({ count: events.length, code: records?.code, total: records?.data?.total }, 'Pulled ANPR event records')
+      const events = extractEvents(rawBody)
 
-            if (events.length === 0) {
-              logger.info('No ANPR events found, trying without event type filter')
-              records = await hik.searchEventRecords(startTime, endTime)
-              events = records?.data?.list || []
-              logger.info({ count: events.length, code: records?.code }, 'Pulled all event records (no filter)')
-            }
-
-            if (events.length === 0) {
-              logger.info('No event records found, falling back to passageway records')
-              const cameraName = parsed.cameraName || ''
-              const inferredDirection = /EXIT/i.test(cameraName) ? 'exit' : 'entry'
-
-              let resolvedCameraId = ''
-              if (cameraName) {
-                const stripped = cameraName.replace(/^ANPR\s+/i, '').trim()
-
-                let camByName = await Camera.findOne({ name: { $regex: cameraName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' } })
-                if (camByName) resolvedCameraId = camByName.cameraId
-
-                if (!resolvedCameraId) {
-                  camByName = await Camera.findOne({ name: { $regex: stripped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' } })
-                  if (camByName) resolvedCameraId = camByName.cameraId
-                }
-
-                if (!resolvedCameraId) {
-                  camByName = await Camera.findOne({ direction: inferredDirection, name: { $regex: stripped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' } })
-                  if (camByName) resolvedCameraId = camByName.cameraId
-                }
-
-                if (!resolvedCameraId) {
-                  const camByDir = await Camera.findOne({ direction: inferredDirection })
-                  if (camByDir) resolvedCameraId = camByDir.cameraId
-                }
-              }
-              logger.info({ cameraName, inferredDirection, resolvedCameraId }, 'Resolved camera from combined alarm')
-
-              const lots = await ParkingLot.find().lean()
-              const processedPlates = new Set()
-              const mismatchedRecords = []
-              for (const lot of lots) {
-                const lotCode = lot.parkingLotIndexCode || lot.parkingLotId
-                try {
-                  const pr = await hik.getPassagewayRecords(lotCode, startTime, endTime)
-                  const passRecords = pr?.data?.list || []
-                  logger.info({ lotCode, count: passRecords.length }, 'Pulled passageway records')
-                  for (const rec of passRecords) {
-                    const car = rec.carInfo
-                    if (car?.plateLicense) {
-                      const plateNumber = car.plateLicense
-                      if (processedPlates.has(plateNumber)) continue
-                      const laneDir = rec.laneInfo?.direction
-                      const recordDirection = laneDir === 1 ? 'entry' : laneDir === 2 ? 'exit' : null
-                      if (recordDirection && recordDirection !== inferredDirection) {
-                        mismatchedRecords.push({ plateNumber, rec, recordDirection })
-                        continue
-                      }
-                      processedPlates.add(plateNumber)
-                      const camId = rec.laneInfo?.laneIndexCode || resolvedCameraId || ''
-                      let eventTime
-                      if (recordDirection === 'exit') {
-                        eventTime = car.ExitTime || car.EnterTime || now.toISOString()
-                      } else {
-                        eventTime = car.EnterTime || now.toISOString()
-                      }
-                      const result = await processAnprEvent({ plateNumber, cameraId: camId, eventTime })
-                      if (result) updateLog(result, rawBody)
-                    }
-                  }
-                } catch (e) {
-                  logger.warn({ lotCode, err: e.message }, 'Failed to pull passageway records')
-                }
-              }
-
-              if (processedPlates.size === 0 && resolvedCameraId && mismatchedRecords.length > 0) {
-                logger.info({ count: mismatchedRecords.length }, 'No records matched direction filter, falling back without filter')
-                for (const { plateNumber, rec } of mismatchedRecords) {
-                  if (processedPlates.has(plateNumber)) continue
-                  processedPlates.add(plateNumber)
-                  const car = rec.carInfo
-                  const laneDir = rec.laneInfo?.direction
-                  const recordDirection = laneDir === 1 ? 'entry' : laneDir === 2 ? 'exit' : null
-                  const eventTime = (recordDirection === 'exit' && car.ExitTime)
-                    ? car.ExitTime
-                    : (car.EnterTime || now.toISOString())
-                  const result = await processAnprEvent({ plateNumber, cameraId: resolvedCameraId, eventTime })
-                  if (result) updateLog(result, rawBody)
-                }
-              }
-            }
-
-            for (const evt of events) {
-              const data = evt.data || evt.eventData || evt
-              const plateNumber = data.plateNo || data.plateNumber || data.plateLicense || ''
-              const cameraId = evt.srcIndex || data.srcIndex || evt.sourceID || ''
-              if (plateNumber) {
-                const result = await processAnprEvent({ plateNumber, cameraId, eventTime: evt.sendTime || evt.eventTime || now.toISOString() })
-                if (result) updateLog(result, rawBody)
-              }
-            }
-          } catch (err) {
-            logger.warn({ err: err.message }, 'Failed to pull event records')
-          }
-        } else {
-          await saveDroppedEvent(rawBody, '', 'Could not parse string event — no plate or camera name found', '', '')
-        }
+      if (events.length === 0) {
+        logger.warn({ bodyPreview: JSON.stringify(rawBody).slice(0, 500) }, 'No events extracted from payload')
+        await saveDroppedEvent(rawBody, '', 'No events extracted from webhook payload', '', '')
         return reply.status(200).send({ code: '0', msg: 'success' })
       }
 
-      // Handle JSON body
-      if (typeof rawBody === 'object' && rawBody !== null) {
-        // Real ANPR event format: { method: "OnEventNotify", params: { ability: "event_veh", events: [...] } }
-        if (rawBody.params && rawBody.params.events && Array.isArray(rawBody.params.events)) {
-          for (const evt of rawBody.params.events) {
-            const data = evt.data || evt
-            const event = {
-              plateNumber: data.plateNo || '',
-              cameraId: evt.srcIndex || data.srcIndex || '',
-              eventTime: rawBody.params.sendTime || new Date().toISOString(),
-            }
-            if (event.plateNumber) {
-              const result = await processAnprEvent(event)
-              if (result) updateLog(result, rawBody)
-            }
-          }
-          return reply.status(200).send({ code: '0', msg: 'success' })
-        }
-
-        // Simplified format: { eventData: { plateNumber, cameraId } }
-        const eventData = rawBody.eventData || rawBody.data || rawBody
-        if (eventData.plateNumber && eventData.cameraId) {
-          const result = await processAnprEvent(eventData)
-          if (result) updateLog(result, rawBody)
-          return reply.status(200).send({ code: '0', msg: 'success' })
-        }
-
-        // Array format: { events: [...] }
-        if (Array.isArray(rawBody.events)) {
-          for (const evt of rawBody.events) {
-            const inner = evt.eventData || evt.data || evt
-            if (inner.plateNumber && inner.cameraId) {
-              const result = await processAnprEvent(inner)
-              if (result) updateLog(result, rawBody)
-            }
-          }
-          return reply.status(200).send({ code: '0', msg: 'success' })
-        }
-
-        // List format: { list: [...] }
-        if (rawBody.list && Array.isArray(rawBody.list)) {
-          for (const evt of rawBody.list) {
-            const result = await processAnprEvent(evt)
-            if (result) updateLog(result, rawBody)
-          }
-          return reply.status(200).send({ code: '0', msg: 'success' })
-        }
-
-        logger.warn({ body: rawBody }, 'Unrecognized JSON event')
-        await saveDroppedEvent(rawBody, '', 'Unrecognized JSON format — no matching event structure found', '', '')
+      logger.info({ count: events.length, first: events[0] }, 'Processing events')
+      for (const evt of events) {
+        if (!evt.plateNumber) continue
+        const result = await processAnprEvent(evt)
+        if (result) updateLog(result, rawBody)
       }
 
       return reply.status(200).send({ code: '0', msg: 'success' })
     } catch (err) {
-      logger.error({ err: err.message }, 'Error processing event')
+      logger.error({ err: err.message, stack: err.stack }, 'Error processing event')
       return reply.status(200).send({ code: '0', msg: 'success' })
     }
   })
+}
+
+function extractEvents(rawBody) {
+  // Format 1: HikCentral OnEventNotify with params.events
+  // { method: "OnEventNotify", params: { ability: "event_veh", events: [...], sendTime: "..." } }
+  if (rawBody && rawBody.params && rawBody.params.events && Array.isArray(rawBody.params.events)) {
+    const results = []
+    for (const evt of rawBody.params.events) {
+      const data = evt.data || evt
+      results.push({
+        plateNumber: data.plateNo || data.plateNumber || data.plateLicense || '',
+        cameraId: evt.srcIndex || data.srcIndex || evt.sourceID || '',
+        cameraName: evt.srcName || data.srcName || '',
+        eventTime: rawBody.params.sendTime || evt.eventTime || new Date().toISOString(),
+      })
+    }
+    return results
+  }
+
+  // Format 2: Simplified { eventData: { plateNumber, cameraId } }
+  const eventData = rawBody && (rawBody.eventData || rawBody.data)
+  if (eventData && eventData.plateNumber && eventData.cameraId) {
+    return [eventData]
+  }
+
+  // Format 3: Array of events { events: [...] }
+  if (rawBody && rawBody.events && Array.isArray(rawBody.events)) {
+    const results = []
+    for (const evt of rawBody.events) {
+      const inner = evt.eventData || evt.data || evt
+      if (inner.plateNumber && inner.cameraId) {
+        results.push(inner)
+      }
+    }
+    return results
+  }
+
+  // Format 4: List { list: [...] }
+  if (rawBody && rawBody.list && Array.isArray(rawBody.list)) {
+    return rawBody.list
+  }
+
+  // Format 5: String body (combined alarm notification from HikCentral)
+  if (typeof rawBody === 'string') {
+    return extractFromStringEvent(rawBody)
+  }
+
+  // Format 6: Single event object with plateNumber + cameraId at top level
+  if (rawBody && rawBody.plateNumber && rawBody.cameraId) {
+    return [rawBody]
+  }
+
+  return []
+}
+
+function extractFromStringEvent(rawString) {
+  const plateMatch = rawString.match(/\b([A-Z]{1,3}\s?\d{1,4}[A-Z]{0,1})\b/gi)
+  const areaMatch = rawString.match(/(ANPR\s[\dA-Z\s]+?(?:ENTRY|EXIT))/i)
+
+  if (!plateMatch && !areaMatch) return []
+
+  const plate = plateMatch ? plateMatch[0].toUpperCase().replace(/\s+/g, ' ').trim() : ''
+  const cameraName = areaMatch ? areaMatch[0] : ''
+
+  return [{
+    plateNumber: plate,
+    cameraName,
+    eventTime: new Date().toISOString(),
+    rawString,
+  }]
 }
 
 async function updateLog(result, rawBody) {
   if (!result) return
   await EventLog.findOneAndUpdate(
     { plate: result.plate, cameraId: result.cameraId, receivedAt: { $gte: new Date(Date.now() - 60000) } },
-    { processed: true, plate: result.plate, cameraId: result.cameraId, direction: result.direction }
+    { processed: true, plate: result.plate, cameraId: result.cameraId, direction: result.direction },
   )
 
   await RawEvent.create({
@@ -261,15 +162,6 @@ async function saveDroppedEvent(rawBody, plate, reason, cameraId, cameraName) {
     receivedAt: new Date(),
   })
   broadcastRawEvent(doc)
-}
-
-function parseStringEvent(str) {
-  const plateMatch = str.match(/\b([A-Z]{1,3}\s?\d{1,4}[A-Z]{0,1})\b/g)
-  const areaMatch = str.match(/(ANPR\s[\dA-Z\s]+?(?:ENTRY|EXIT))/i)
-  if (plateMatch || areaMatch) {
-    return { plateNumber: plateMatch?.[0] || '', cameraName: areaMatch?.[0] || '', rawString: str }
-  }
-  return null
 }
 
 module.exports = { eventRoutes }

@@ -78,10 +78,13 @@ async function resolveCameraByIndexCode(indexCode) {
   return Camera.findOne({ indexCode })
 }
 async function getCameraDirection(cameraId) {
-  const cam = await Camera.findOne({ cameraId })
-  if (!cam) return 'entry'
+  let cam = await Camera.findOne({ cameraId })
+  if (!cam) {
+    cam = await Camera.findOne({ indexCode: cameraId })
+  }
+  if (!cam) return 'unknown'
   if (cam.direction === 'both') return 'entry'
-  return cam.direction || 'entry'
+  return cam.direction || 'unknown'
 }
 async function isResidentialCamera(cameraId) {
   const cam = await Camera.findOne({ cameraId })

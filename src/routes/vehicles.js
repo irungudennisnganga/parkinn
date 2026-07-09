@@ -2,17 +2,22 @@ const { RegisteredVehicle } = require('../models/RegisteredVehicle')
 const { VehicleSession } = require('../models/VehicleSession')
 const { broadcastActiveSessions } = require('../services/WebSocketManager')
 
+function normalizePlate(plate) {
+  return plate.toUpperCase().replace(/\s+/g, '').trim()
+}
+
 async function vehicleRoutes(app) {
   app.post('/register', async (request, reply) => {
     const { plate, ownerName, unitNumber, phoneNumber, floorAccess } = request.body
+    const normalized = normalizePlate(plate)
 
-    const existing = await RegisteredVehicle.findOne({ plate: plate.toUpperCase() })
+    const existing = await RegisteredVehicle.findOne({ plate: normalized })
     if (existing) {
       return reply.status(409).send({ error: 'Vehicle already registered' })
     }
 
     const vehicle = await RegisteredVehicle.create({
-      plate: plate.toUpperCase(),
+      plate: normalized,
       ownerName,
       unitNumber,
       phoneNumber,
@@ -24,7 +29,7 @@ async function vehicleRoutes(app) {
   })
 
   app.get('/:plate', async (request, reply) => {
-    const plate = request.params.plate.toUpperCase()
+    const plate = normalizePlate(request.params.plate)
     const vehicle = await RegisteredVehicle.findOne({ plate })
     if (!vehicle) {
       return reply.status(404).send({ error: 'Vehicle not found' })
@@ -41,7 +46,7 @@ async function vehicleRoutes(app) {
   })
 
   app.delete('/:plate', async (request, reply) => {
-    const plate = (request.params.plate || request.body?.plate || '').toUpperCase()
+    const plate = normalizePlate(request.params.plate || request.body?.plate || '')
     if (!plate) {
       return reply.status(400).send({ error: 'Plate number required' })
     }

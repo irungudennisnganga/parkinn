@@ -20,4 +20,9 @@ const vehicleSessionSchema = new Schema({
   },
 })
 
+vehicleSessionSchema.index(
+  { plate: 1 },
+  { unique: true, partialFilterExpression: { status: 'active' }, name: 'unique_active_plate' },
+)
+
 module.exports = { VehicleSession: model('VehicleSession', vehicleSessionSchema) }

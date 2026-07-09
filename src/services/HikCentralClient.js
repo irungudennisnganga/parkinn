@@ -116,6 +116,14 @@ class HikCentralClient {
     })
   }
 
+  // --- Capture / Snapshot ---
+  capturePicture(deviceId, channel = 1) {
+    return this.request('capturePic', 'POST', '/api/hccgw/resource/v1/device/capturePic', {
+      deviceId,
+      channel,
+    }, { skipErrorLog: true })
+  }
+
   // --- Events ---
   subscribeEvents(eventTypes, eventDest) {
     return this.request('evSub', 'POST', '/artemis/api/eventService/v1/eventSubscriptionByEventTypes', {

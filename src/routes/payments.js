@@ -42,6 +42,10 @@ async function paymentRoutes(app) {
     const session = await VehicleSession.findOne({ plate: plate.toUpperCase(), status: { $in: ['active', 'unpaid'] } })
       .sort({ entryTime: -1 })
     if (!session) {
+      session = await VehicleSession.findOne({ plate: plate.toUpperCase(), status: 'unpaid' })
+        .sort({ entryTime: -1 })
+    }
+    if (!session) {
       return reply.status(404).send({ error: 'No active session found for this plate' })
     }
 
@@ -110,6 +114,10 @@ async function paymentRoutes(app) {
 
     const session = await VehicleSession.findOne({ plate, status: { $in: ['active', 'unpaid'] } })
       .sort({ entryTime: -1 })
+    if (!session) {
+      session = await VehicleSession.findOne({ plate, status: 'unpaid' })
+        .sort({ entryTime: -1 })
+    }
     if (!session) {
       return reply.status(404).send({ error: 'No active/unpaid session found for this plate' })
     }

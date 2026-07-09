@@ -192,9 +192,9 @@ async function paymentRoutes(app) {
     await session.save()
     broadcastSessionUpdate(session)
 
-    const fee = session.chargeAmount || 0
+    // const fee = session.chargeAmount || 0
 
-    const cameraId = session.exitCamera || session.entryCamera
+    // const cameraId = session.exitCamera || session.entryCamera
     const currentCamera = await Camera.findOne({
       $or: [{ cameraId }, { indexCode: cameraId }],
     })

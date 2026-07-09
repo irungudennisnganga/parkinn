@@ -278,14 +278,17 @@ async function handleEntry(event, plate, cameraId, eventTime) {
   const registered = await RegisteredVehicle.findOne({ plate, isActive: true })
   const isKnown = !!registered
 
+  const internalFloor = await isInternalFloorCamera(cameraId)
   const residential = await isResidentialCamera(cameraId)
 
-  if (residential && !isKnown) {
-    logger.warn({ plate, cameraId }, 'Unknown vehicle blocked at residential entry')
-    return { action: 'blocked', reason: 'Unknown vehicle at residential entry — barrier not opened', session: null }
+  if (residential && !isKnown && !internalFloor) {
+    logger.warn({ plate, cameraId }, 'Unknown vehicle blocked at residential building entry')
+    return { action: 'blocked', reason: 'Unknown vehicle at residential building entry — barrier not opened', session: null }
   }
 
-  try { await openBarrierWithLog(cameraId, plate, 'system') } catch (_) {}
+  if (!internalFloor) {
+    try { await openBarrierWithLog(cameraId, plate, 'system') } catch (_) {}
+  }
 
   const barrier = await findBarrierForCamera(cameraId)
   const barrierId = barrier?.barrierId || cameraId

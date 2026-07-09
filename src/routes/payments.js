@@ -154,6 +154,23 @@ async function paymentRoutes(app) {
       session.chargeAmount = amount
     }
 
+    try {
+      const hikCalc = await hik.calculateParkingFee(plate)
+      if (hikCalc?.data?.fee) {
+        const hikFee = parseFloat(hikCalc.data.fee)
+        if (hikFee > 0) fee = hikFee
+        session.chargeAmount = fee
+        session.hikCentralFeeData = {
+          fee: hikCalc.data.fee,
+          feeRuleType: hikCalc.data.feeRuleType,
+          feeRuleIndexCode: hikCalc.data.feeRuleIndexCode,
+          feeRuleName: hikCalc.data.feeRuleName,
+          parkingDuration: hikCalc.data.parkingDuration,
+          parkingInTime: hikCalc.data.parkingInTime,
+        }
+      }
+    } catch (_) {}
+
     await session.save()
     broadcastSessionUpdate(session)
 

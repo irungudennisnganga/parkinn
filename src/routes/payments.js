@@ -146,11 +146,16 @@ async function paymentRoutes(app) {
 
     session.status = 'paid'
     session.paymentRef = ref
+    let fee = session.chargeAmount || 0
+
+    if (fee === 0) {
+      const { amount } = await calculateCharge(session.entryTime, new Date(), session.entryCamera)
+      fee = amount
+      session.chargeAmount = amount
+    }
+
     await session.save()
-
     broadcastSessionUpdate(session)
-
-    const fee = session.chargeAmount || 0
 
     try {
       const confirm = await hik.confirmParkingFee(plate, fee, 1)

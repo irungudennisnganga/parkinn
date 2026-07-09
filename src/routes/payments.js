@@ -15,8 +15,39 @@ const hik = new HikCentralClient()
 async function paymentRoutes(app) {
   app.get('/fee/:plate', async (request, reply) => {
     const plate = request.params.plate.toUpperCase()
-    const session = await VehicleSession.findOne({ plate, status: { $in: ['active', 'unpaid'] } })
+    let session = await VehicleSession.findOne({ plate, status: { $in: ['active', 'unpaid'] } })
+      .sort({ entryTime: -1 })
+
     if (!session) {
+      const now = new Date()
+      const startTime = isoLocal(new Date(now.getTime() - 24 * 3600000))
+      const endTime = isoLocal(now)
+      const lots = await ParkingLot.find().lean()
+      for (const lot of lots) {
+        try {
+          const pr = await hik.getPassagewayRecords(lot.parkingLotIndexCode || lot.parkingLotId, startTime, endTime)
+          const records = pr?.data?.list || []
+          for (const rec of records) {
+            const car = rec.carInfo || {}
+            const recPlate = (car.plateLicense || '').toUpperCase().replace(/\s+/g, '').trim()
+            if (recPlate !== plate) continue
+            const lane = rec.laneInfo || {}
+            if (lane.direction !== 1) continue
+            const hikEntry = new Date(car.EnterTime || now.toISOString())
+            const { amount, rateDescription } = await calculateCharge(hikEntry, now, lane.laneIndexCode || '')
+            return reply.send({
+              plate,
+              entryTime: hikEntry,
+              source: 'hikcentral',
+              durationHours: Math.round(((now.getTime() - hikEntry.getTime()) / 3600000) * 100) / 100,
+              chargeAmount: amount,
+              rateDescription,
+              status: 'unpaid',
+              paymentRef: '',
+            })
+          }
+        } catch (_) {}
+      }
       return reply.status(404).send({ error: 'No active session found for this plate' })
     }
 

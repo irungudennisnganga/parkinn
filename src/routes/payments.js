@@ -1,6 +1,7 @@
 const { VehicleSession } = require('../models/VehicleSession')
 const { RegisteredVehicle } = require('../models/RegisteredVehicle')
 const { Camera } = require('../models/Camera')
+const { Area } = require('../models/Area')
 const { ParkingLot } = require('../models/ParkingLot')
 const { initiateStkPush } = require('../services/PaymentService')
 const { calculateCharge } = require('../services/ParkingLogic')

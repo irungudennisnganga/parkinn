@@ -73,6 +73,30 @@ async function paymentRoutes(app) {
         .sort({ entryTime: -1 })
     }
     if (!session) {
+      const hikEntry = await findLatestHikEntryForPlate(plate.toUpperCase())
+      if (hikEntry) {
+        session = await VehicleSession.create({
+          plate: plate.toUpperCase(),
+          entryTime: hikEntry.enterTime,
+          entryCamera: hikEntry.cameraId || 'hikcentral',
+          entryBarrier: hikEntry.cameraId || 'hikcentral',
+          isKnown: false,
+          status: 'unpaid',
+          chargeAmount: 0,
+          floorLog: [{
+            cameraId: hikEntry.cameraId || 'hikcentral',
+            cameraName: 'HikCentral',
+            floor: 'Unknown',
+            floorType: 'unknown',
+            timestamp: hikEntry.enterTime,
+            action: 'entry',
+          }],
+        })
+        logger.info({ plate, sessionId: session._id }, 'Created session from HikCentral fallback for STK push')
+      }
+    }
+
+    if (!session) {
       return reply.status(404).send({ error: 'No active session found for this plate' })
     }
 
@@ -145,6 +169,31 @@ async function paymentRoutes(app) {
       session = await VehicleSession.findOne({ plate, status: 'unpaid' })
         .sort({ entryTime: -1 })
     }
+
+    if (!session) {
+      const hikEntry = await findLatestHikEntryForPlate(plate)
+      if (hikEntry) {
+        session = await VehicleSession.create({
+          plate,
+          entryTime: hikEntry.enterTime,
+          entryCamera: hikEntry.cameraId || 'hikcentral',
+          entryBarrier: hikEntry.cameraId || 'hikcentral',
+          isKnown: false,
+          status: 'unpaid',
+          chargeAmount: 0,
+          floorLog: [{
+            cameraId: hikEntry.cameraId || 'hikcentral',
+            cameraName: 'HikCentral',
+            floor: 'Unknown',
+            floorType: 'unknown',
+            timestamp: hikEntry.enterTime,
+            action: 'entry',
+          }],
+        })
+        logger.info({ plate, sessionId: session._id }, 'Created session from HikCentral fallback for payment confirmation')
+      }
+    }
+
     if (!session) {
       return reply.status(404).send({ error: 'No active/unpaid session found for this plate' })
     }

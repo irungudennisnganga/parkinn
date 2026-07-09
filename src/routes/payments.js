@@ -200,26 +200,21 @@ async function paymentRoutes(app) {
       if (confirm?.code === '0') {
         session.status = 'exited'
         session.exitTime = new Date()
+        session.exitCamera = cameraId
         await session.save()
         broadcastSessionUpdate(session)
-        return reply.send({ success: true, plate, fee, message: 'Payment confirmed, barrier opened via HikCentral' })
+        return reply.send({ success: true, plate, fee, message: 'Payment confirmed, synced to HikCentral' })
       }
-      logger.warn({ plate, code: confirm?.code }, 'HikCentral confirm returned non-zero code')
+      logger.warn({ plate, code: confirm?.code }, 'HikCentral confirm returned non-zero code — session stays paid for ANPR exit')
     } catch (err) {
-      logger.warn({ plate, err: err.message }, 'HikCentral confirm failed, trying barrier fallback')
+      logger.warn({ plate, err: err.message }, 'HikCentral confirm failed — session stays paid for ANPR exit')
     }
 
     if (cameraId) {
-      const result = await openBarrierByCamera(cameraId)
-      session.status = 'exited'
-      session.exitTime = new Date()
-      session.exitCamera = session.exitCamera || cameraId
-      await session.save()
-      broadcastSessionUpdate(session)
-      return reply.send({ success: result.success, plate, method: result.method, message: 'Barrier opened via camera fallback' })
+      try { await openBarrierByCamera(cameraId) } catch (_) {}
     }
 
-    return reply.send({ success: true, plate, message: 'Marked as paid — exit on next ANPR detection' })
+    return reply.send({ success: true, plate, fee, message: 'Payment marked as paid. HikCentral will auto-exit when car passes ANPR camera.' })
   })
 }
 

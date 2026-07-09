@@ -169,6 +169,10 @@ async function paymentRoutes(app) {
       session = await VehicleSession.findOne({ plate, status: 'unpaid' })
         .sort({ entryTime: -1 })
     }
+    if (!session) {
+      session = await VehicleSession.findOne({ plate, status: 'paid' })
+        .sort({ entryTime: -1 })
+    }
 
     if (!session) {
       const hikEntry = await findLatestHikEntryForPlate(plate)
@@ -195,10 +199,13 @@ async function paymentRoutes(app) {
     }
 
     if (!session) {
-      return reply.status(404).send({ error: 'No active/unpaid session found for this plate' })
+      return reply.status(404).send({ error: 'No active/unpaid/paid session found for this plate' })
     }
 
-    session.status = 'paid'
+    const wasAlreadyPaid = session.status === 'paid'
+    if (!wasAlreadyPaid) {
+      session.status = 'paid'
+    }
     session.paymentRef = ref
     await session.save()
 

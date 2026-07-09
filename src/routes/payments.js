@@ -1,12 +1,14 @@
 const { VehicleSession } = require('../models/VehicleSession')
 const { RegisteredVehicle } = require('../models/RegisteredVehicle')
 const { Camera } = require('../models/Camera')
+const { ParkingLot } = require('../models/ParkingLot')
 const { initiateStkPush } = require('../services/PaymentService')
 const { calculateCharge } = require('../services/ParkingLogic')
 const { openBarrierByCamera, findBarrierForCamera } = require('../services/BarrierControl')
 const { HikCentralClient } = require('../services/HikCentralClient')
 const { broadcastSessionUpdate } = require('../services/WebSocketManager')
 const { logger } = require('../utils/logger')
+const { isoLocal } = require('../utils/dateUtils')
 
 const hik = new HikCentralClient()
 
@@ -15,6 +17,7 @@ async function paymentRoutes(app) {
     const plate = request.params.plate.toUpperCase()
     const session = await VehicleSession.findOne({ plate, status: { $in: ['active', 'unpaid'] } })
       .sort({ entryTime: -1 })
+
     if (!session) {
       return reply.status(404).send({ error: 'No active session found for this plate' })
     }

@@ -196,14 +196,12 @@ async function paymentRoutes(app) {
     const cameraId = session.exitCamera || session.entryCamera
 
     try {
-      const confirm = await hik.confirmParkingFee(plate, fee, 1)
+      const confirm = await hik.confirmParkingFee(plate, fee, 0)
       if (confirm?.code === '0') {
-        session.status = 'exited'
-        session.exitTime = new Date()
-        session.exitCamera = cameraId
+        logger.info({ plate, fee }, 'HikCentral payment confirmed — car stays paid, exits on ANPR')
         await session.save()
         broadcastSessionUpdate(session)
-        return reply.send({ success: true, plate, fee, message: 'Payment confirmed, synced to HikCentral' })
+        return reply.send({ success: true, plate, fee, message: 'Payment synced to HikCentral. Car exits on ANPR camera.' })
       }
       logger.warn({ plate, code: confirm?.code }, 'HikCentral confirm returned non-zero code — session stays paid for ANPR exit')
     } catch (err) {

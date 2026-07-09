@@ -1,6 +1,7 @@
 const { VehicleRecord } = require('../models/VehicleRecord')
 const { VehicleSession } = require('../models/VehicleSession')
 const { RegisteredVehicle } = require('../models/RegisteredVehicle')
+const { Barrier } = require('../models/Barrier')
 const { logger } = require('../utils/logger')
 
 async function recordRoutes(app) {
@@ -62,11 +63,15 @@ async function recordRoutes(app) {
     try {
       const plate = request.params.plate.toUpperCase()
 
-      const [records, sessions, registered] = await Promise.all([
+      const [records, sessions, registered, barriers] = await Promise.all([
         VehicleRecord.find({ plate }).sort({ enterTime: -1 }).limit(50).lean(),
         VehicleSession.find({ plate }).sort({ entryTime: -1 }).limit(20).lean(),
         RegisteredVehicle.findOne({ plate }),
+        Barrier.find().lean(),
       ])
+
+      const barrierMap = Object.fromEntries(barriers.map(b => [b.barrierId, b]))
+      const cameraBarrierMap = Object.fromEntries(barriers.map(b => [b.cameraId, b]))
 
       const recent = records.map(r => ({
         plate: r.plate,
@@ -92,23 +97,32 @@ async function recordRoutes(app) {
           floorAccess: registered.floorAccess,
           isActive: registered.isActive,
         } : null,
-        sessions: sessions.map(s => ({
-          plate: s.plate,
-          entryTime: s.entryTime,
-          exitTime: s.exitTime,
-          chargeAmount: s.chargeAmount,
-          paymentRef: s.paymentRef,
-          status: s.status,
-          isKnown: s.isKnown,
-          floorLog: (s.floorLog || []).map(e => ({
+        sessions: sessions.map(s => {
+          const entryBarrier = barrierMap[s.entryBarrier] || cameraBarrierMap[s.entryCamera]
+          const exitBarrier = barrierMap[s.exitBarrier] || cameraBarrierMap[s.exitCamera]
+          const floorLog = (s.floorLog || []).map(e => ({
             cameraId: e.cameraId,
             cameraName: e.cameraName,
             floor: e.floor,
             floorType: e.floorType,
             timestamp: e.timestamp,
             action: e.action,
-          })),
-        })),
+          }))
+          const lastFloor = floorLog.length > 0 ? floorLog[floorLog.length - 1] : null
+          return {
+            plate: s.plate,
+            entryTime: s.entryTime,
+            exitTime: s.exitTime,
+            chargeAmount: s.chargeAmount,
+            paymentRef: s.paymentRef,
+            status: s.status,
+            isKnown: s.isKnown,
+            entryBarrier: entryBarrier?.name || s.entryBarrier || '--',
+            exitBarrier: exitBarrier?.name || s.exitBarrier || null,
+            currentFloor: s.status === 'active' && lastFloor ? { floor: lastFloor.floor, floorType: lastFloor.floorType, cameraName: lastFloor.cameraName, since: lastFloor.timestamp } : null,
+            floorLog,
+          }
+        }),
         recentRecords: recent,
       })
     } catch (err) {

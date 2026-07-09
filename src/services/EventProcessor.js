@@ -2,6 +2,7 @@ const { logger } = require('../utils/logger')
 const { RegisteredVehicle } = require('../models/RegisteredVehicle')
 const { VehicleSession } = require('../models/VehicleSession')
 const { Camera } = require('../models/Camera')
+const { BarrierLog } = require('../models/BarrierLog')
 const { openBarrierByCamera, findBarrierForCamera, getCameraDirection, isResidentialCamera } = require('./BarrierControl')
 const { calculateCharge } = require('./ParkingLogic')
 const { HikCentralClient } = require('./HikCentralClient')
@@ -158,6 +159,25 @@ async function isBuildingExitCamera(cameraId) {
   return !area.parentId
 }
 
+async function openBarrierWithLog(cameraId, plate, triggeredBy) {
+  const barrier = await findBarrierForCamera(cameraId)
+  const id = barrier?.barrierId || cameraId
+  const result = await openBarrierByCamera(cameraId)
+  try {
+    await BarrierLog.create({
+      barrierId: id,
+      barrierName: barrier?.name || id,
+      action: 'open',
+      method: result.method || 'auto',
+      triggeredBy: triggeredBy || 'system',
+      plate: plate || '',
+      cameraId,
+      success: result.success || false,
+    })
+  } catch (_) {}
+  return result
+}
+
 async function processAnprEvent(event) {
   const extracted = extractAnprData(event) || event
   const plate = normalizePlate(extracted.plateNumber || event.plateNumber || '')
@@ -243,7 +263,7 @@ async function handleEntry(event, plate, cameraId, eventTime) {
 
       const isInternal = await isInternalFloorCamera(cameraId)
       if (!isInternal) {
-        try { await openBarrierByCamera(cameraId) } catch (_) {}
+        try { await openBarrierWithLog(cameraId, plate, 'system') } catch (_) {}
       }
       return { action: 'floor_change', reason: `Vehicle moved to ${floorInfo.floor}`, session: activeSession }
     }
@@ -259,7 +279,7 @@ async function handleEntry(event, plate, cameraId, eventTime) {
     return { action: 'blocked', reason: 'Unknown vehicle at residential entry — barrier not opened', session: null }
   }
 
-  try { await openBarrierByCamera(cameraId) } catch (_) {}
+  try { await openBarrierWithLog(cameraId, plate, 'system') } catch (_) {}
 
   const barrier = await findBarrierForCamera(cameraId)
   const barrierId = barrier?.barrierId || cameraId
@@ -304,7 +324,7 @@ async function handleExit(event, plate, cameraId, eventTime) {
   if (!session) {
     session = await VehicleSession.findOne({ plate, status: 'paid' })
     if (session) {
-      try { await openBarrierByCamera(cameraId) } catch (_) {}
+      try { await openBarrierWithLog(cameraId, plate, 'system') } catch (_) {}
       session.exitTime = exitDate
       session.exitCamera = cameraId
       session.status = 'exited'
@@ -352,7 +372,7 @@ async function handleExit(event, plate, cameraId, eventTime) {
 
     const isInternal = await isInternalFloorCamera(cameraId)
     if (!isInternal) {
-      try { await openBarrierByCamera(cameraId) } catch (_) {}
+      try { await openBarrierWithLog(cameraId, plate, 'system') } catch (_) {}
     }
     return { action: 'floor_change', reason: `Moved to ${floorInfo.floor} (internal floor — not building exit)`, session }
   }
@@ -361,7 +381,7 @@ async function handleExit(event, plate, cameraId, eventTime) {
   const isKnown = !!registered
 
   if (isKnown) {
-    try { await openBarrierByCamera(cameraId) } catch (_) {}
+    try { await openBarrierWithLog(cameraId, plate, 'system') } catch (_) {}
     session.exitTime = exitDate
     session.exitCamera = cameraId
     session.status = 'exited'
@@ -409,7 +429,7 @@ async function handleExit(event, plate, cameraId, eventTime) {
   }
 
   if (charge.amount === 0) {
-    try { await openBarrierByCamera(cameraId) } catch (_) {}
+    try { await openBarrierWithLog(cameraId, plate, 'system') } catch (_) {}
     session.exitTime = exitDate
     session.exitCamera = cameraId
     session.status = 'exited'

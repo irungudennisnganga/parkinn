@@ -82,9 +82,9 @@ async function getCameraDirection(cameraId) {
   if (!cam) {
     cam = await Camera.findOne({ indexCode: cameraId })
   }
-  if (!cam) return 'unknown'
-  if (cam.direction === 'both') return 'entry'
-  return cam.direction || 'unknown'
+  if (!cam) return 'both'
+  if (!cam.direction) return 'both'
+  return cam.direction
 }
 async function isResidentialCamera(cameraId) {
   const cam = await Camera.findOne({ cameraId })

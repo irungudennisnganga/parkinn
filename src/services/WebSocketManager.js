@@ -52,9 +52,17 @@ async function sendActiveSessions(clientId) {
       .limit(500)
       .lean()
 
+    const seen = new Set()
+    const deduped = sessions.filter(s => {
+      const key = `${s.plate}_${s.status}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+
     client.socket.send(JSON.stringify({
       type: 'active_sessions',
-      data: sessions,
+      data: deduped,
       timestamp: new Date().toISOString(),
     }))
   } catch (err) {
@@ -68,9 +76,17 @@ async function broadcastActiveSessions() {
     .limit(500)
     .lean()
 
+  const seen = new Set()
+  const deduped = sessions.filter(s => {
+    const key = `${s.plate}_${s.status}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+
   const payload = JSON.stringify({
     type: 'active_sessions',
-    data: sessions,
+    data: deduped,
     timestamp: new Date().toISOString(),
   })
 

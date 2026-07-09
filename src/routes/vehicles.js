@@ -42,7 +42,17 @@ async function vehicleRoutes(app) {
     const sessions = await VehicleSession.find({ status: { $in: ['active', 'unpaid'] } })
       .sort({ entryTime: -1 })
       .limit(500)
-    return { sessions }
+      .lean()
+
+    const seen = new Set()
+    const deduped = sessions.filter(s => {
+      const key = `${s.plate}_${s.status}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+
+    return { sessions: deduped }
   })
 
   app.delete('/:plate', async (request, reply) => {

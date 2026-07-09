@@ -198,83 +198,46 @@ async function paymentRoutes(app) {
       return reply.status(400).send({ error: 'plate required' })
     }
 
-    let session = await VehicleSession.findOne({ plate, status: 'active' })
-      .sort({ entryTime: -1 })
-    if (!session) {
-      session = await VehicleSession.findOne({ plate, status: 'unpaid' })
-        .sort({ entryTime: -1 })
-    }
-    if (!session) {
-      session = await VehicleSession.findOne({ plate, status: 'paid' })
-        .sort({ entryTime: -1 })
-    }
-
-    if (!session) {
-      const hikEntry = await findLatestHikEntryForPlate(plate)
-      if (hikEntry) {
-        session = await VehicleSession.create({
-          plate,
-          entryTime: hikEntry.enterTime,
-          entryCamera: hikEntry.cameraId || 'hikcentral',
-          entryBarrier: hikEntry.cameraId || 'hikcentral',
-          isKnown: false,
-          status: 'unpaid',
-          chargeAmount: 0,
-          floorLog: [{
-            cameraId: hikEntry.cameraId || 'hikcentral',
-            cameraName: 'HikCentral',
-            floor: 'Unknown',
-            floorType: 'unknown',
-            timestamp: hikEntry.enterTime,
-            action: 'entry',
-          }],
-        })
-        logger.info({ plate, sessionId: session._id }, 'Created session from HikCentral fallback for payment confirmation')
-      }
-    }
+    const session = await VehicleSession.findOne({
+      plate,
+      status: { $in: ['active', 'unpaid', 'paid'] },
+    }).sort({ entryTime: -1 })
 
     if (!session) {
       return reply.status(404).send({ error: 'No active/unpaid/paid session found for this plate' })
     }
 
-    const wasAlreadyPaid = session.status === 'paid'
-    if (!wasAlreadyPaid) {
+    if (session.status !== 'paid') {
       session.status = 'paid'
+      session.paymentRef = ref
+      await session.save()
+    } else {
+      session.paymentRef = ref
+      await session.save()
     }
-    session.paymentRef = ref
-    await session.save()
 
     broadcastSessionUpdate(session)
 
     const fee = session.chargeAmount || 0
     const cameraId = session.exitCamera || session.entryCamera
 
-    try {
-      const confirm = await hik.confirmParkingFee(plate, fee, 1)
-      if (confirm?.code === '0') {
-        session.status = 'exited'
-        session.exitTime = new Date()
-        session.exitCamera = cameraId
-        await session.save()
-        broadcastSessionUpdate(session)
-        return reply.send({ success: true, plate, fee, message: 'Payment confirmed, barrier opened via HikCentral' })
-      }
-      logger.warn({ plate, code: confirm?.code }, 'HikCentral confirm returned non-zero code')
-    } catch (err) {
-      logger.warn({ plate, err: err.message }, 'HikCentral confirm failed, trying barrier fallback')
-    }
-
     if (cameraId) {
       const result = await openBarrierByCamera(cameraId)
+      try {
+        const confirm = await hik.confirmParkingFee(plate, fee, 1)
+        logger.info({ plate, fee, hikResponse: confirm?.code }, 'HikCentral confirmParkingFee result')
+      } catch (err) {
+        logger.warn({ plate, err: err.message }, 'HikCentral confirmParkingFee failed')
+      }
       session.status = 'exited'
       session.exitTime = new Date()
-      session.exitCamera = session.exitCamera || cameraId
+      session.exitCamera = cameraId
       await session.save()
       broadcastSessionUpdate(session)
-      return reply.send({ success: result.success, plate, method: result.method, message: 'Barrier opened via camera fallback' })
+      return reply.send({ success: result.success, plate, method: result.method, message: 'Payment confirmed, barrier opened' })
     }
 
-    return reply.send({ success: true, plate, message: 'Marked as paid — exit on next ANPR detection' })
+    return reply.send({ success: true, plate, message: 'Marked as paid. Barrier will open on next ANPR detection.' })
   })
 }
 

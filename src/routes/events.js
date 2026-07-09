@@ -19,19 +19,26 @@ async function eventRoutes(app) {
 
       logger.info({ contentType, bodyType: typeof rawBody }, 'Event received at /eventsRCV')
 
-      // Save every incoming event as a raw record
-      await RawEvent.create({
-        body: rawBody,
-        format: typeof rawBody === 'string' ? 'string' : 'json',
-        receivedAt: new Date(),
-      })
+      try {
+        await RawEvent.create({
+          body: rawBody,
+          format: typeof rawBody === 'string' ? 'string' : 'json',
+          receivedAt: new Date(),
+        })
+      } catch (er) {
+        logger.warn({ err: er.message }, 'Failed to save initial RawEvent')
+      }
 
-      // Save raw event to DB for inspection
-      await EventLog.create({ body: rawBody, format: typeof rawBody, receivedAt: new Date() })
+      try {
+        await EventLog.create({ body: rawBody, format: typeof rawBody, receivedAt: new Date() })
+      } catch (er) {
+        logger.warn({ err: er.message }, 'Failed to save EventLog')
+      }
 
       // Handle string body (HikCentral combined alarm notification)
       if (typeof rawBody === 'string') {
         const parsed = parseStringEvent(rawBody)
+        logger.info({ parsed, rawLength: rawBody.length }, 'String event parsed')
         if (parsed) {
           logger.info({ parsed }, 'Combined alarm notification — pulling event data')
           const now = new Date()

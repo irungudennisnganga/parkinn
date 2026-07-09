@@ -6,11 +6,13 @@ const { logger } = require('../utils/logger')
 const clients = new Map()
 
 function setupWebSocket(fastify) {
+  logger.info('Registering WebSocket route /ws')
+
   fastify.get('/ws', { websocket: true }, (socket, req) => {
     const clientId = Date.now().toString(36) + Math.random().toString(36).slice(2)
     clients.set(clientId, { socket, connectedAt: new Date() })
 
-    logger.info({ clientId }, 'WebSocket client connected')
+    logger.info({ clientId, remoteAddress: req.socket?.remoteAddress }, 'WebSocket client connected')
 
     sendActiveSessions(clientId)
 

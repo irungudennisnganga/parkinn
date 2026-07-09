@@ -118,13 +118,25 @@ async function handleEntry(event, plate, cameraId, eventTime) {
 
   const activeSession = await VehicleSession.findOne({ plate, status: 'active' })
   if (activeSession) {
-    if (activeSession.entryCamera === cameraId) {
-      logger.info({ plate, cameraId, sessionId: activeSession._id }, 'Vehicle already has active session on this camera, skipping')
-      return { action: 'skip', reason: 'Active session already exists on same camera', session: null }
+    const hoursSinceEntry = (entryDate.getTime() - activeSession.entryTime.getTime()) / 3600000
+
+    if (hoursSinceEntry > 2) {
+      logger.info({ plate, sessionId: activeSession._id, hoursSinceEntry: Math.round(hoursSinceEntry), entryTime: activeSession.entryTime },
+        'Stale active session — auto-closing as exited and creating new session')
+      activeSession.status = 'exited'
+      activeSession.exitTime = new Date(activeSession.entryTime.getTime() + 3600000)
+      activeSession.exitCamera = activeSession.entryCamera
+      await activeSession.save()
+      broadcastSessionUpdate(activeSession)
+    } else {
+      if (activeSession.entryCamera === cameraId) {
+        logger.info({ plate, cameraId, sessionId: activeSession._id }, 'Vehicle already has active session on this camera, skipping')
+        return { action: 'skip', reason: 'Active session already exists on same camera', session: null }
+      }
+      logger.info({ plate, cameraId, sessionId: activeSession._id, prevCamera: activeSession.entryCamera }, 'Vehicle has active session on different camera, opening barrier only')
+      await openBarrierByCamera(cameraId)
+      return { action: 'skip', reason: 'Active session on different camera — barrier opened but no new session', session: activeSession }
     }
-    logger.info({ plate, cameraId, sessionId: activeSession._id, prevCamera: activeSession.entryCamera }, 'Vehicle has active session on different camera, opening barrier only')
-    await openBarrierByCamera(cameraId)
-    return { action: 'skip', reason: 'Active session on different camera — barrier opened but no new session', session: activeSession }
   }
 
   const recentDuplicate = await VehicleSession.findOne({
@@ -264,6 +276,8 @@ async function handleExit(event, plate, cameraId, eventTime) {
   }
 
   session.status = 'unpaid'
+  session.exitTime = exitDate
+  session.exitCamera = cameraId
   await session.save()
   logger.info({ plate, charge: charge.amount, source: charge.source || 'local' }, 'Unpaid vehicle — barrier stays closed, payment required')
   broadcastSessionUpdate(session)

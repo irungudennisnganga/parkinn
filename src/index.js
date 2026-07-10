@@ -57,6 +57,69 @@ async function createApp() {
   return { app, wsManager }
 }
 
+async function startStaleSessionCleanup() {
+  const { VehicleSession } = require('./models/VehicleSession')
+  const { ParkingLot } = require('./models/ParkingLot')
+  const { HikCentralClient } = require('./services/HikCentralClient')
+  const { isoLocal } = require('./utils/dateUtils')
+  const hik = new HikCentralClient()
+  let firstRun = true
+
+  async function check() {
+    try {
+      const sessions = await VehicleSession.find({ status: 'active' }, { plate: 1 }).lean()
+      if (!sessions.length) return
+
+      const now = new Date()
+      const lookbackMinutes = firstRun ? (now.getHours() * 60 + now.getMinutes()) : 10
+      const startTime = isoLocal(new Date(now.getTime() - lookbackMinutes * 60000))
+      const endTime = isoLocal(now)
+      const lots = await ParkingLot.find().lean()
+
+      let closedCount = 0
+      for (const s of sessions) {
+        for (const lot of lots) {
+          try {
+            const pr = await hik.getPassagewayRecords(lot.parkingLotIndexCode || lot.parkingLotId, startTime, endTime)
+            const records = pr?.data?.list || []
+            for (const rec of records) {
+              const car = rec.carInfo || {}
+              const lane = rec.laneInfo || {}
+              const plate = (car.plateLicense || '').toUpperCase().replace(/\s+/g, '').trim()
+              if (plate !== s.plate || lane.direction !== 2) continue
+
+              await VehicleSession.updateOne(
+                { _id: s._id, status: 'active' },
+                {
+                  $set: {
+                    exitTime: new Date(car.ExitTime || now.toISOString()),
+                    exitCamera: lane.laneIndexCode || s.entryCamera,
+                    status: 'unpaid',
+                  },
+                },
+              )
+              closedCount++
+              logger.info({ plate: s.plate }, 'Auto-closed stale active session from exit record')
+            }
+          } catch (_) {}
+        }
+      }
+
+      if (firstRun) firstRun = false
+
+      if (closedCount > 0) {
+        const { broadcastActiveSessions } = require('./services/WebSocketManager')
+        broadcastActiveSessions()
+      }
+    } catch (err) {
+      logger.warn({ err: err.message }, 'Stale session cleanup check failed')
+    }
+  }
+
+  check()
+  setInterval(check, 5 * 60 * 1000)
+}
+
 async function main() {
   const { app } = await createApp()
 
@@ -215,6 +278,8 @@ async function main() {
           broadcastActiveSessions()
         }
         logger.info({ created, closed, totalPlates: allPlates.size }, 'Startup passageway reconciliation complete')
+
+        startStaleSessionCleanup()
       } catch (err) {
         logger.warn({ err: err.message }, 'Startup passageway reconciliation failed')
       }

@@ -50,7 +50,12 @@ async function eventRoutes(app) {
           if (result) updateLog(result, rawBody)
           processedCount++
 
-          if (!result?.session && result?.action !== 'skip' && result?.action !== 'blocked') {
+          const needsFallback = !result?.session &&
+            !(result?.action === 'skip' && result?.reason?.includes('already has active session')) &&
+            !(result?.action === 'skip' && result?.reason?.includes('30 seconds')) &&
+            result?.action !== 'blocked'
+
+          if (needsFallback) {
             await createSessionFromPassageway(evt.plateNumber)
           }
           continue

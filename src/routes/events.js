@@ -6,7 +6,7 @@ const { Camera } = require('../models/Camera')
 const { ParkingLot } = require('../models/ParkingLot')
 const { logger } = require('../utils/logger')
 const { isoLocal } = require('../utils/dateUtils')
-const { broadcastNewEvent, broadcastActiveSessions, broadcastRawEvent } = require('../services/WebSocketManager')
+const { broadcastNewEvent, broadcastActiveSessions, broadcastRawEvent, broadcastSessionUpdate } = require('../services/WebSocketManager')
 
 const hik = new HikCentralClient()
 
@@ -49,6 +49,10 @@ async function eventRoutes(app) {
           const result = await processAnprEvent(evt)
           if (result) updateLog(result, rawBody)
           processedCount++
+
+          if (!result?.session && result?.action !== 'skip' && result?.action !== 'blocked') {
+            await createSessionFromPassageway(evt.plateNumber)
+          }
           continue
         }
 
@@ -92,7 +96,7 @@ function extractEvents(rawBody) {
         plateNumber: data.plateNo || data.plateNumber || data.plateLicense || '',
         cameraId: evt.srcIndex || data.srcIndex || evt.sourceID || '',
         cameraName: evt.srcName || data.srcName || '',
-        eventTime: rawBody.params.sendTime || evt.eventTime || new Date().toISOString(),
+        eventTime: evt.eventTime || data.eventTime || rawBody.params.sendTime || evt.occurTime || new Date().toISOString(),
         needsFallback: false,
       })
     }
@@ -259,6 +263,100 @@ async function saveDroppedEvent(rawBody, plate, reason, cameraId, cameraName) {
     receivedAt: new Date(),
   })
   broadcastRawEvent(doc)
+}
+
+async function createSessionFromPassageway(plate) {
+  try {
+    const { VehicleSession } = require('../models/VehicleSession')
+    const { Camera } = require('../models/Camera')
+    const { Barrier } = require('../models/Barrier')
+    const existing = await VehicleSession.findOne({
+      plate,
+      status: { $in: ['active', 'unpaid', 'paid'] },
+    })
+    if (existing) return
+
+    const now = new Date()
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const startTime = isoLocal(startOfToday)
+    const endTime = isoLocal(now)
+    const lots = await ParkingLot.find().lean()
+
+    const cameras = await Camera.find().lean()
+    const cameraByIndexCode = Object.fromEntries(cameras.map(c => [c.indexCode, c]))
+    const cameraById = Object.fromEntries(cameras.map(c => [c.cameraId, c]))
+    const barriers = await Barrier.find().lean()
+    const barrierByCameraId = Object.fromEntries(barriers.map(b => [b.cameraId, b]))
+
+    let created = false
+
+    for (const lot of lots) {
+      try {
+        const pr = await hik.getPassagewayRecords(lot.parkingLotIndexCode || lot.parkingLotId, startTime, endTime)
+        const records = pr?.data?.list || []
+        for (const rec of records) {
+          const car = rec.carInfo || {}
+          const lane = rec.laneInfo || {}
+          const recPlate = (car.plateLicense || '').toUpperCase().replace(/\s+/g, '').trim()
+          if (recPlate !== plate) continue
+
+          const cam = cameraByIndexCode[lane.laneIndexCode] || cameraById[lane.laneIndexCode] || null
+          const barrier = cam ? barrierByCameraId[cam.cameraId] : null
+
+          if (lane.direction === 1 && !created) {
+            await VehicleSession.create({
+              plate,
+              entryTime: new Date(car.EnterTime || now.toISOString()),
+              entryCamera: cam?.cameraId || lane.laneIndexCode || 'hikcentral',
+              entryBarrier: barrier?.barrierId || cam?.cameraId || lane.laneIndexCode || 'hikcentral',
+              isKnown: false,
+              status: 'active',
+            })
+            created = true
+            logger.info({ plate, cameraId: cam?.cameraId }, 'Reactive: session created from passageway')
+          }
+
+          if (lane.direction === 2 && !created) {
+            const alreadyExists = await VehicleSession.findOne({ plate, status: { $in: ['active', 'unpaid', 'paid'] } })
+            if (!alreadyExists) {
+              const entryFromRecord = car.EnterTime || null
+              await VehicleSession.create({
+                plate,
+                entryTime: entryFromRecord ? new Date(entryFromRecord) : new Date(now.getTime() - 3600000),
+                exitTime: new Date(car.ExitTime || now.toISOString()),
+                entryCamera: cam?.cameraId || lane.laneIndexCode || 'hikcentral',
+                exitCamera: cam?.cameraId || lane.laneIndexCode || 'hikcentral',
+                entryBarrier: barrier?.barrierId || cam?.cameraId || lane.laneIndexCode || 'hikcentral',
+                isKnown: false,
+                status: 'unpaid',
+                chargeAmount: 0,
+              })
+              created = true
+              logger.info({ plate }, 'Reactive: exited-without-session created as unpaid')
+            }
+          }
+
+          if (lane.direction === 2 && created) {
+            const session = await VehicleSession.findOne({ plate, status: 'active' })
+            if (session) {
+              session.exitTime = new Date(car.ExitTime || now.toISOString())
+              session.exitCamera = cam?.cameraId || lane.laneIndexCode || session.entryCamera
+              session.status = 'unpaid'
+              await session.save()
+              broadcastSessionUpdate(session)
+              logger.info({ plate, sessionId: session._id }, 'Reactive: session auto-closed as unpaid from passageway exit')
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (created) {
+      broadcastActiveSessions()
+    }
+  } catch (err) {
+    logger.warn({ plate, err: err.message }, 'Reactive passageway fallback failed')
+  }
 }
 
 module.exports = { eventRoutes }

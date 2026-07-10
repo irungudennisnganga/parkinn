@@ -210,10 +210,6 @@ async function main() {
             }
           }
         }
-          } catch (e) {
-            logger.warn({ lotCode: lot.parkingLotIndexCode || lot.parkingLotId, err: e.message }, 'Startup sync: lot fetch failed')
-          }
-        }
 
         if (created > 0 || closed > 0) {
           broadcastActiveSessions()

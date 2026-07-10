@@ -101,8 +101,8 @@ async function main() {
         const barriers = await Barrier.find().lean()
         const barrierByCameraId = Object.fromEntries(barriers.map(b => [b.cameraId, b]))
 
-        const seenPlates = new Set()
         const allPlates = new Set()
+        const plateRecords = new Map()
         let created = 0
         let closed = 0
 
@@ -118,44 +118,98 @@ async function main() {
               if (!plate || plate === 'UNKNOWN') continue
               allPlates.add(plate)
 
-              const existing = await VehicleSession.findOne({
-                plate,
-                status: { $in: ['active', 'unpaid', 'paid'] },
-              })
+              if (!plateRecords.has(plate)) {
+                plateRecords.set(plate, { entry: null, exit: null })
+              }
+              const prData = plateRecords.get(plate)
 
               const cam = cameraByIndexCode[lane.laneIndexCode] || cameraById[lane.laneIndexCode] || null
               const barrier = cam ? barrierByCameraId[cam.cameraId] : null
 
-              if (!existing && lane.direction === 1 && !seenPlates.has(plate)) {
-                seenPlates.add(plate)
-                try {
-                  const session = await VehicleSession.create({
-                    plate,
-                    entryTime: new Date(car.EnterTime || now.toISOString()),
-                    entryCamera: cam?.cameraId || lane.laneIndexCode || 'hikcentral',
-                    entryBarrier: barrier?.barrierId || cam?.cameraId || lane.laneIndexCode || 'hikcentral',
-                    isKnown: false,
-                    status: 'active',
-                  })
-                  created++
-                  logger.info({ plate, sessionId: session._id }, 'Startup sync: session created')
-                } catch (e) {
-                  if (e.code !== 11000) {
-                    logger.warn({ plate, err: e.message }, 'Startup sync: session creation failed')
-                  }
-                }
+              if (lane.direction === 1 && !prData.entry) {
+                prData.entry = { enterTime: car.EnterTime, cameraId: cam?.cameraId || lane.laneIndexCode, barrierId: barrier?.barrierId || cam?.cameraId || lane.laneIndexCode }
               }
-
-              if (existing && existing.status === 'active' && lane.direction === 2) {
-                const exitTime = car.ExitTime
-                existing.exitTime = exitTime ? new Date(exitTime) : new Date()
-                existing.exitCamera = cam?.cameraId || lane.laneIndexCode || existing.entryCamera
-                existing.status = 'unpaid'
-                await existing.save()
-                closed++
-                logger.info({ plate, sessionId: existing._id }, 'Startup sync: stale session closed as unpaid')
+              if (lane.direction === 2 && !prData.exit) {
+                prData.exit = { exitTime: car.ExitTime, cameraId: cam?.cameraId || lane.laneIndexCode }
               }
             }
+          } catch (e) {
+            logger.warn({ lotCode: lot.parkingLotIndexCode || lot.parkingLotId, err: e.message }, 'Startup sync: lot fetch failed')
+          }
+        }
+
+        for (const [plate, pr] of plateRecords) {
+          const existing = await VehicleSession.findOne({
+            plate,
+            status: { $in: ['active', 'unpaid', 'paid'] },
+          }).sort({ entryTime: -1 })
+
+          const hasActiveSession = existing?.status === 'active'
+
+          if (!existing && pr.entry) {
+            try {
+              await VehicleSession.create({
+                plate,
+                entryTime: new Date(pr.entry.enterTime || now.toISOString()),
+                entryCamera: pr.entry.cameraId || 'hikcentral',
+                entryBarrier: pr.entry.barrierId || pr.entry.cameraId || 'hikcentral',
+                isKnown: false,
+                status: pr.exit ? 'unpaid' : 'active',
+                exitTime: pr.exit ? new Date(pr.exit.exitTime) : undefined,
+                exitCamera: pr.exit ? pr.exit.cameraId : undefined,
+              })
+              created++
+              logger.info({ plate, hasExit: !!pr.exit }, 'Startup sync: session created')
+            } catch (e) {
+              if (e.code !== 11000) {
+                logger.warn({ plate, err: e.message }, 'Startup sync: session creation failed')
+              }
+            }
+          }
+
+          if (!existing && !pr.entry && pr.exit) {
+            try {
+              await VehicleSession.create({
+                plate,
+                entryTime: new Date(now.getTime() - 3600000),
+                exitTime: new Date(pr.exit.exitTime || now.toISOString()),
+                entryCamera: pr.exit.cameraId || 'hikcentral',
+                exitCamera: pr.exit.cameraId || 'hikcentral',
+                entryBarrier: pr.exit.cameraId || 'hikcentral',
+                isKnown: false,
+                status: 'unpaid',
+                chargeAmount: 0,
+              })
+              created++
+              logger.info({ plate }, 'Startup sync: exit-only session created as unpaid')
+            } catch (e) {
+              if (e.code !== 11000) {
+                logger.warn({ plate, err: e.message }, 'Startup sync: exit-only creation failed')
+              }
+            }
+          }
+
+          if (pr.exit && hasActiveSession) {
+            existing.exitTime = new Date(pr.exit.exitTime || now.toISOString())
+            existing.exitCamera = pr.exit.cameraId || existing.entryCamera
+            existing.status = 'unpaid'
+            await existing.save()
+            closed++
+            logger.info({ plate, sessionId: existing._id }, 'Startup sync: active session closed as unpaid')
+          }
+
+          if (pr.exit && !hasActiveSession && existing) {
+            const activeDuplicate = await VehicleSession.findOne({ plate, status: 'active' })
+            if (activeDuplicate) {
+              activeDuplicate.exitTime = new Date(pr.exit.exitTime || now.toISOString())
+              activeDuplicate.exitCamera = pr.exit.cameraId || activeDuplicate.entryCamera
+              activeDuplicate.status = 'unpaid'
+              await activeDuplicate.save()
+              closed++
+              logger.info({ plate, sessionId: activeDuplicate._id }, 'Startup sync: orphaned active session closed as unpaid')
+            }
+          }
+        }
           } catch (e) {
             logger.warn({ lotCode: lot.parkingLotIndexCode || lot.parkingLotId, err: e.message }, 'Startup sync: lot fetch failed')
           }

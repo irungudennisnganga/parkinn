@@ -223,6 +223,63 @@ const { ParkingLot } = require('../models/ParkingLot')
     return { success: true, summary }
   })
 
+  app.get('/session-history', async (request) => {
+    const page = parseInt(request.query.page) || 1
+    const limit = Math.min(parseInt(request.query.limit) || 20, 100)
+    const skip = (page - 1) * limit
+    const search = request.query.search || ''
+    const status = request.query.status || ''
+    const dateFrom = request.query.dateFrom || ''
+    const dateTo = request.query.dateTo || ''
+
+    const filter = { status: { $in: ['paid', 'unpaid', 'exited'] } }
+    if (search) {
+      filter.plate = { $regex: search.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' }
+    }
+    if (status && ['paid','unpaid','exited'].includes(status)) {
+      filter.status = status
+    }
+    if (dateFrom || dateTo) {
+      filter.entryTime = {}
+      if (dateFrom) filter.entryTime.$gte = new Date(dateFrom)
+      if (dateTo) filter.entryTime.$lte = new Date(dateTo + 'T23:59:59.999Z')
+    }
+
+    const [sessions, total, cameras, areas] = await Promise.all([
+      VehicleSession.find(filter)
+        .sort({ entryTime: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      VehicleSession.countDocuments(filter),
+      Camera.find().lean(),
+      Area.find().lean(),
+    ])
+
+    const cameraMap = Object.fromEntries(cameras.map(c => [c.cameraId, c]))
+    const areaMap = Object.fromEntries(areas.map(a => [a.areaId, a]))
+
+    const results = sessions.map(s => {
+      const cam = cameraMap[s.entryCamera] || cameraMap[s.exitCamera]
+      const area = cam ? areaMap[cam.areaId] : null
+      return {
+        _id: s._id,
+        plate: s.plate,
+        entryTime: s.entryTime,
+        exitTime: s.exitTime,
+        chargeAmount: s.chargeAmount,
+        chargeRate: s.chargeRate,
+        paymentRef: s.paymentRef || '--',
+        status: s.status,
+        isKnown: s.isKnown,
+        floor: area?.name || 'Unknown',
+        floorType: area?.areaType || 'unknown',
+      }
+    })
+
+    return { sessions: results, pagination: { page, limit, total, totalPages: Math.ceil(total / limit), hasMore: skip + limit < total } }
+  })
+
   app.get('/payment-history', async (request) => {
     const page = parseInt(request.query.page) || 1
     const limit = Math.min(parseInt(request.query.limit) || 20, 100)

@@ -333,6 +333,12 @@ async function handleExit(event, plate, cameraId, eventTime) {
     return { action: 'skip', reason: 'Exit within 30 seconds of entry — skipped as duplicate', session: null }
   }
 
+  if (session.entryTime && exitDate <= new Date(session.entryTime)) {
+    logger.warn({ plate, entryTime: session.entryTime, eventTime: exitDate },
+      'Exit event time is before or equal to entry time — ignoring invalid exit')
+    return { action: 'skip', reason: 'Exit time cannot be before or equal to entry time', session: null }
+  }
+
   const isBuildingExit = await isBuildingExitCamera(cameraId)
   const isInternalFloor = await isInternalFloorCamera(cameraId)
 

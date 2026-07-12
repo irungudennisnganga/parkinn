@@ -4,7 +4,225 @@ const { Camera } = require('../models/Camera')
 const { Area } = require('../models/Area')
 const { ParkingLot } = require('../models/ParkingLot')
 
-async function parkingRoutes(app) {
+  async function parkingRoutes(app) {
+  app.get('/daily-analytics', async (request) => {
+    const { DailySummary } = require('../models/DailySummary')
+    const { VehicleSession } = require('../models/VehicleSession')
+    const { Camera } = require('../models/Camera')
+    const { Area } = require('../models/Area')
+
+    const dateFrom = request.query.from || ''
+    const dateTo = request.query.to || ''
+    const daysBack = parseInt(request.query.days) || 14
+
+    const todayUTC = new Date().toISOString().slice(0, 10)
+
+    let startDate, endDate
+    if (dateFrom) {
+      startDate = new Date(dateFrom + 'T00:00:00.000Z')
+      endDate = dateTo ? new Date(dateTo + 'T23:59:59.999Z') : new Date(todayUTC + 'T23:59:59.999Z')
+    } else {
+      endDate = new Date(todayUTC + 'T23:59:59.999Z')
+      startDate = new Date(todayUTC + 'T00:00:00.000Z')
+      startDate.setUTCDate(startDate.getUTCDate() - daysBack + 1)
+    }
+
+    const [savedSummaries, sessions, cameras, areas] = await Promise.all([
+      DailySummary.find({
+        date: {
+          $gte: startDate.toISOString().slice(0, 10),
+          $lte: endDate.toISOString().slice(0, 10),
+        },
+      }).sort({ date: 1 }).lean(),
+      VehicleSession.find({
+        entryTime: { $gte: startDate, $lte: endDate },
+      }).lean(),
+      Camera.find().lean(),
+      Area.find().lean(),
+    ])
+
+    const cameraMap = Object.fromEntries(cameras.map(c => [c.cameraId, c]))
+    const areaMap = Object.fromEntries(areas.map(a => [a.areaId, a]))
+
+    const dailyMap = {}
+    const savedMap = Object.fromEntries(savedSummaries.map(s => [s.date, s]))
+
+    const dateLabels = []
+    const cursor = new Date(startDate)
+    while (cursor <= endDate) {
+      dateLabels.push(cursor.toISOString().slice(0, 10))
+      cursor.setDate(cursor.getDate() + 1)
+    }
+
+    for (const label of dateLabels) {
+      if (savedMap[label]) {
+        dailyMap[label] = { ...savedMap[label], fromSaved: true }
+      } else {
+        dailyMap[label] = {
+          date: label,
+          totalEntries: 0,
+          totalExits: 0,
+          totalRevenue: 0,
+          totalPaid: 0,
+          totalUnpaid: 0,
+          knownEntries: 0,
+          unknownEntries: 0,
+          peakHour: 0,
+          hourlyBreakdown: Array.from({ length: 24 }, (_, i) => ({ hour: i, entries: 0, exits: 0, revenue: 0 })),
+          floorBreakdown: [],
+          fromSaved: false,
+        }
+      }
+    }
+
+    const floorCountMap = {}
+    for (const s of sessions) {
+      const entryDate = new Date(s.entryTime).toISOString().slice(0, 10)
+      if (!dailyMap[entryDate]) continue
+
+      const day = dailyMap[entryDate]
+      if (day.fromSaved) continue
+
+      day.totalEntries++
+      if (s.isKnown) day.knownEntries++
+      else day.unknownEntries++
+
+      const entryHour = new Date(s.entryTime).getHours()
+      day.hourlyBreakdown[entryHour].entries++
+
+      if (s.status === 'paid' || s.status === 'exited') {
+        day.totalExits++
+        const exitHour = s.exitTime ? new Date(s.exitTime).getHours() : entryHour
+        day.hourlyBreakdown[exitHour].exits++
+      }
+      if (s.status === 'paid') {
+        day.totalPaid++
+        day.totalRevenue += s.chargeAmount || 0
+        const exitHour = s.exitTime ? new Date(s.exitTime).getHours() : entryHour
+        day.hourlyBreakdown[exitHour].revenue += s.chargeAmount || 0
+      }
+      if (s.status === 'unpaid') {
+        day.totalUnpaid++
+      }
+
+      const cam = cameraMap[s.entryCamera]
+      const area = cam ? areaMap[cam.areaId] : null
+      const floor = area?.name || 'Unknown'
+      if (!floorCountMap[entryDate]) floorCountMap[entryDate] = {}
+      if (!floorCountMap[entryDate][floor]) {
+        floorCountMap[entryDate][floor] = { floor, floorType: area?.areaType || 'unknown', entries: 0, exits: 0 }
+      }
+      floorCountMap[entryDate][floor].entries++
+      if (s.status === 'paid' || s.status === 'exited') {
+        floorCountMap[entryDate][floor].exits++
+      }
+    }
+
+    for (const [dateKey, day] of Object.entries(dailyMap)) {
+      if (!day.fromSaved && floorCountMap[dateKey]) {
+        day.floorBreakdown = Object.values(floorCountMap[dateKey]).sort((a, b) => b.entries - a.entries)
+      }
+      if (!day.fromSaved) {
+        let maxEntries = 0
+        let peak = 0
+        for (const h of day.hourlyBreakdown) {
+          if (h.entries > maxEntries) {
+            maxEntries = h.entries
+            peak = h.hour
+          }
+        }
+        day.peakHour = peak
+      }
+    }
+
+    const days = Object.values(dailyMap)
+    const totals = {
+      totalEntries: days.reduce((s, d) => s + d.totalEntries, 0),
+      totalExits: days.reduce((s, d) => s + d.totalExits, 0),
+      totalRevenue: days.reduce((s, d) => s + d.totalRevenue, 0),
+      totalPaid: days.reduce((s, d) => s + d.totalPaid, 0),
+      totalUnpaid: days.reduce((s, d) => s + d.totalUnpaid, 0),
+      knownEntries: days.reduce((s, d) => s + d.knownEntries, 0),
+      unknownEntries: days.reduce((s, d) => s + d.unknownEntries, 0),
+    }
+
+    return { days, totals, range: { from: dateLabels[0], to: dateLabels[dateLabels.length - 1] } }
+  })
+
+  app.post('/daily-analytics/save', async (request) => {
+    const { DailySummary } = require('../models/DailySummary')
+    const { VehicleSession } = require('../models/VehicleSession')
+    const { Camera } = require('../models/Camera')
+    const { Area } = require('../models/Area')
+
+    const targetDate = request.body?.date || new Date().toISOString().slice(0, 10)
+    const startOfDay = new Date(targetDate + 'T00:00:00.000Z')
+    const endOfDay = new Date(targetDate + 'T23:59:59.999Z')
+
+    const [sessions, cameras, areas] = await Promise.all([
+      VehicleSession.find({ entryTime: { $gte: startOfDay, $lte: endOfDay } }).lean(),
+      Camera.find().lean(),
+      Area.find().lean(),
+    ])
+
+    const cameraMap = Object.fromEntries(cameras.map(c => [c.cameraId, c]))
+    const areaMap = Object.fromEntries(areas.map(a => [a.areaId, a]))
+
+    const hourly = Array.from({ length: 24 }, (_, i) => ({ hour: i, entries: 0, exits: 0, revenue: 0 }))
+    const floorMap = {}
+    let totalEntries = 0, totalExits = 0, totalRevenue = 0, totalPaid = 0, totalUnpaid = 0
+    let knownEntries = 0, unknownEntries = 0
+
+    for (const s of sessions) {
+      totalEntries++
+      if (s.isKnown) knownEntries++
+      else unknownEntries++
+
+      const entryHour = new Date(s.entryTime).getHours()
+      hourly[entryHour].entries++
+
+      if (s.status === 'paid' || s.status === 'exited') {
+        totalExits++
+        const exitHour = s.exitTime ? new Date(s.exitTime).getHours() : entryHour
+        hourly[exitHour].exits++
+      }
+      if (s.status === 'paid') {
+        totalPaid++
+        totalRevenue += s.chargeAmount || 0
+        const exitHour = s.exitTime ? new Date(s.exitTime).getHours() : entryHour
+        hourly[exitHour].revenue += s.chargeAmount || 0
+      }
+      if (s.status === 'unpaid') totalUnpaid++
+
+      const cam = cameraMap[s.entryCamera]
+      const area = cam ? areaMap[cam.areaId] : null
+      const floor = area?.name || 'Unknown'
+      if (!floorMap[floor]) floorMap[floor] = { floor, floorType: area?.areaType || 'unknown', entries: 0, exits: 0 }
+      floorMap[floor].entries++
+      if (s.status === 'paid' || s.status === 'exited') floorMap[floor].exits++
+    }
+
+    let peakHour = 0, maxEntries = 0
+    for (const h of hourly) {
+      if (h.entries > maxEntries) { maxEntries = h.entries; peakHour = h.hour }
+    }
+
+    const summary = await DailySummary.findOneAndUpdate(
+      { date: targetDate },
+      {
+        date: targetDate,
+        totalEntries, totalExits, totalRevenue, totalPaid, totalUnpaid,
+        knownEntries, unknownEntries, peakHour,
+        hourlyBreakdown: hourly,
+        floorBreakdown: Object.values(floorMap).sort((a, b) => b.entries - a.entries),
+        snapshotAt: new Date(),
+      },
+      { upsert: true, new: true },
+    )
+
+    return { success: true, summary }
+  })
+
   app.get('/payment-history', async (request) => {
     const page = parseInt(request.query.page) || 1
     const limit = Math.min(parseInt(request.query.limit) || 20, 100)

@@ -40,6 +40,7 @@ async function createApp() {
 
   app.register(authRoutes, { prefix: '/auth' })
   app.register(mpesaRoutes, { prefix: '/mpesa' })
+  app.register(paymentRoutes, { prefix: '/public/payments' })
   app.register(eventRoutes, { prefix: '/' })
 
   app.register(async function protectedRoutes(scope) {

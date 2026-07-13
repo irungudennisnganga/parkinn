@@ -3,6 +3,8 @@ const { VehicleRecord } = require('../models/VehicleRecord')
 const { Camera } = require('../models/Camera')
 const { Area } = require('../models/Area')
 const { ParkingLot } = require('../models/ParkingLot')
+const cache = require('../utils/cache')
+const config = require('../config')
 
   async function parkingRoutes(app) {
   app.get('/daily-analytics', async (request) => {
@@ -392,6 +394,9 @@ const { ParkingLot } = require('../models/ParkingLot')
   })
 
   app.get('/dashboard-stats', async () => {
+    const cached = await cache.get(cache.CACHE_KEYS.DASHBOARD_STATS)
+    if (cached) return { ...cached.v, cached: true, cachedAt: new Date(cached.ts).toISOString() }
+
     const now = new Date()
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
     const startOfWeek = new Date(now)
@@ -527,7 +532,7 @@ const { ParkingLot } = require('../models/ParkingLot')
       occupied: l.totalSpaces - l.freeSpaces,
     }))
 
-    return {
+    const result = {
       overview: {
         activeSessions,
         unpaidSessions,
@@ -557,6 +562,9 @@ const { ParkingLot } = require('../models/ParkingLot')
       },
       lots: lotStats,
     }
+
+    await cache.set(cache.CACHE_KEYS.DASHBOARD_STATS, result, config.cache.dashboardStatsTTL)
+    return result
   })
 
   app.get('/system-payments', async (request) => {

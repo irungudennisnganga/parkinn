@@ -1,6 +1,8 @@
 const { RegisteredVehicle } = require('../models/RegisteredVehicle')
 const { VehicleSession } = require('../models/VehicleSession')
 const { broadcastActiveSessions } = require('../services/WebSocketManager')
+const cache = require('../utils/cache')
+const config = require('../config')
 
 function normalizePlate(plate) {
   return plate.toUpperCase().replace(/\s+/g, '').trim()
@@ -39,6 +41,9 @@ async function vehicleRoutes(app) {
   })
 
   app.get('/active', async () => {
+    const cached = await cache.get(cache.CACHE_KEYS.ACTIVE_SESSIONS)
+    if (cached) return { sessions: cached.v, cached: true, cachedAt: new Date(cached.ts).toISOString() }
+
     const sessions = await VehicleSession.find({ status: { $in: ['active', 'unpaid'] } })
       .sort({ entryTime: -1 })
       .limit(500)
@@ -52,6 +57,7 @@ async function vehicleRoutes(app) {
       return true
     })
 
+    await cache.set(cache.CACHE_KEYS.ACTIVE_SESSIONS, deduped, config.cache.activeSessionsTTL)
     return { sessions: deduped }
   })
 

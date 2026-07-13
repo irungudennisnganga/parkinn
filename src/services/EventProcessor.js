@@ -6,6 +6,7 @@ const { openBarrierByCamera, findBarrierForCamera, getCameraDirection, isResiden
 const { calculateCharge } = require('./ParkingLogic')
 const { HikCentralClient } = require('./HikCentralClient')
 const { broadcastNewSession, broadcastSessionUpdate } = require('./WebSocketManager')
+const cache = require('../utils/cache')
 
 function normalizePlate(plate) {
   return plate.toUpperCase().replace(/\s+/g, '').trim()

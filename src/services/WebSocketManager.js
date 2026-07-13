@@ -2,6 +2,7 @@ const { VehicleSession } = require('../models/VehicleSession')
 const { EventLog } = require('../models/EventLog')
 const { RawEvent } = require('../models/RawEvent')
 const { logger } = require('../utils/logger')
+const cache = require('../utils/cache')
 
 const clients = new Map()
 
@@ -71,6 +72,10 @@ async function sendActiveSessions(clientId) {
 }
 
 async function broadcastActiveSessions() {
+  await cache.del(cache.CACHE_KEYS.ACTIVE_SESSIONS)
+  await cache.del(cache.CACHE_KEYS.DASHBOARD_STATS)
+  await cache.delPattern('cache:daily_analytics*')
+
   const sessions = await VehicleSession.find({ status: { $in: ['active', 'unpaid'] } })
     .sort({ entryTime: -1 })
     .limit(500)
@@ -96,6 +101,8 @@ async function broadcastActiveSessions() {
 }
 
 function broadcastNewSession(session) {
+  cache.del(cache.CACHE_KEYS.ACTIVE_SESSIONS).catch(() => {})
+
   const payload = JSON.stringify({
     type: 'new_session',
     data: session,
@@ -108,6 +115,9 @@ function broadcastNewSession(session) {
 }
 
 function broadcastSessionUpdate(session) {
+  cache.del(cache.CACHE_KEYS.ACTIVE_SESSIONS).catch(() => {})
+  cache.del(cache.CACHE_KEYS.DASHBOARD_STATS).catch(() => {})
+
   const payload = JSON.stringify({
     type: 'session_update',
     data: session,

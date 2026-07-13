@@ -7,6 +7,11 @@ module.exports = {
     uri: process.env.MONGODB_URI || 'mongodb://localhost:27017/parking_altura',
   },
 
+  redis: {
+    url: process.env.REDIS_URL || 'redis://localhost:6379',
+    enabled: process.env.REDIS_ENABLED !== 'false',
+  },
+
   hikcentral: {
     baseUrl: process.env.HIK_BASE_URL || '',
     accessKey: process.env.HIK_ACCESS_KEY || '',
@@ -27,6 +32,16 @@ module.exports = {
   payment: {
     defaultRatePerHour: parseInt(process.env.DEFAULT_RATE_PER_HOUR || '100', 10),
     defaultGraceMinutes: parseInt(process.env.DEFAULT_GRACE_MINUTES || '15', 10),
+  },
+
+  cache: {
+    activeSessionsTTL: parseInt(process.env.CACHE_ACTIVE_SESSIONS_TTL || '30', 10),
+    dashboardStatsTTL: parseInt(process.env.CACHE_DASHBOARD_TTL || '60', 10),
+  },
+
+  reconciliation: {
+    intervalMs: parseInt(process.env.RECONCILE_INTERVAL_MS || '60000', 10),
+    cleanupIntervalMs: parseInt(process.env.STALE_CLEANUP_INTERVAL_MS || '60000', 10),
   },
 
   floors: {

@@ -6,8 +6,8 @@ const { isoLocal } = require('../utils/dateUtils')
 const { processAnprEvent } = require('./EventProcessor')
 const { broadcastActiveSessions, broadcastSessionUpdate } = require('./WebSocketManager')
 
-const RECONCILE_INTERVAL_MS = 5 * 60 * 1000
-const LOOKBACK_MINUTES = 6
+const RECONCILE_INTERVAL_MS = 1 * 60 * 1000
+const LOOKBACK_MINUTES = 2
 const STARTUP_LOOKBACK_MINUTES = 30
 
 let timer = null

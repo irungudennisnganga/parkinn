@@ -26,4 +26,30 @@ function isoLocal(date) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${sign}${offH}:${offM}`
 }
 
-module.exports = { minutesBetween, hoursBetween, now, addDays, isoLocal }
+function hikNow() {
+  const config = require('../config')
+  const offset = config?.hikcentral?.timeOffsetMs || 0
+  return offset ? new Date(Date.now() + offset) : new Date()
+}
+
+function toLocalTime(dateOrString) {
+  const config = require('../config')
+  const offset = config?.hikcentral?.timeOffsetMs || 0
+  if (!offset || !dateOrString) return new Date(dateOrString || undefined)
+  return new Date(new Date(dateOrString).getTime() - offset)
+}
+
+function withServerDuration(sessions) {
+  const serverNow = hikNow().getTime()
+  const arr = Array.isArray(sessions) ? sessions : [sessions]
+  for (const s of arr) {
+    if (s && s.entryTime && !s.durationMinutes) {
+      const entryMs = new Date(s.entryTime).getTime()
+      s.durationMinutes = Math.max(0, Math.round((serverNow - entryMs) / 60000))
+      s.serverTime = new Date(serverNow).toISOString()
+    }
+  }
+  return sessions
+}
+
+module.exports = { minutesBetween, hoursBetween, now, addDays, isoLocal, hikNow, toLocalTime, withServerDuration }

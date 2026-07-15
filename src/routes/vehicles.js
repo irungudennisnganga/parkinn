@@ -3,6 +3,7 @@ const { VehicleSession } = require('../models/VehicleSession')
 const { broadcastActiveSessions } = require('../services/WebSocketManager')
 const cache = require('../utils/cache')
 const config = require('../config')
+const { withServerDuration } = require('../utils/dateUtils')
 
 function normalizePlate(plate) {
   return plate.toUpperCase().replace(/\s+/g, '').trim()
@@ -42,7 +43,12 @@ async function vehicleRoutes(app) {
 
   app.get('/active', async () => {
     const cached = await cache.get(cache.CACHE_KEYS.ACTIVE_SESSIONS)
-    if (cached) return { sessions: cached.v, cached: true, cachedAt: new Date(cached.ts).toISOString() }
+    if (cached) {
+      const sessions = typeof cached.v === 'string' ? JSON.parse(cached.v) : cached.v
+      withServerDuration(sessions)
+      const serverTime = sessions.length > 0 ? sessions[0].serverTime : new Date().toISOString()
+      return { sessions, serverTime, cached: true, cachedAt: new Date(cached.ts).toISOString() }
+    }
 
     const sessions = await VehicleSession.find({ status: { $in: ['active', 'unpaid'] } })
       .sort({ entryTime: -1 })
@@ -57,8 +63,11 @@ async function vehicleRoutes(app) {
       return true
     })
 
+    withServerDuration(deduped)
+
     await cache.set(cache.CACHE_KEYS.ACTIVE_SESSIONS, deduped, config.cache.activeSessionsTTL)
-    return { sessions: deduped }
+    const serverTime = deduped.length > 0 ? deduped[0].serverTime : new Date().toISOString()
+    return { sessions: deduped, serverTime }
   })
 
   app.delete('/:plate', async (request, reply) => {

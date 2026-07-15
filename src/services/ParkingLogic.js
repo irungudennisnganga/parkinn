@@ -31,6 +31,7 @@ async function calculateCharge(entryTime, exitTime, cameraId) {
 
 async function markAsPaid(plate, paymentRef) {
   const session = await VehicleSession.findOne({ plate, status: 'unpaid' })
+    .sort({ entryTime: -1 })
   if (!session) {
     logger.warn({ plate }, 'No unpaid session found for payment')
     return false

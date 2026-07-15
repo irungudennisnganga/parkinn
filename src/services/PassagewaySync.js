@@ -2,9 +2,10 @@ const { VehicleSession } = require('../models/VehicleSession')
 const { ParkingLot } = require('../models/ParkingLot')
 const { HikCentralClient } = require('./HikCentralClient')
 const { logger } = require('../utils/logger')
-const { isoLocal } = require('../utils/dateUtils')
+const { isoLocal, hikNow } = require('../utils/dateUtils')
 const { processAnprEvent } = require('./EventProcessor')
 const { broadcastActiveSessions, broadcastSessionUpdate } = require('./WebSocketManager')
+const config = require('../config')
 
 const RECONCILE_INTERVAL_MS = 1 * 60 * 1000
 const LOOKBACK_MINUTES = 2
@@ -20,9 +21,10 @@ async function reconcile() {
 
   try {
     const hik = new HikCentralClient()
-    const now = new Date()
+    const now = hikNow()
+    const localNow = new Date()
     const lookback = lastRun
-      ? Math.min(LOOKBACK_MINUTES, (now - lastRun) / 60000 + 1)
+      ? Math.max(LOOKBACK_MINUTES, (localNow - lastRun) / 60000 + 1)
       : STARTUP_LOOKBACK_MINUTES
     const startTime = isoLocal(new Date(now.getTime() - lookback * 60000))
     const endTime = isoLocal(now)
@@ -49,10 +51,12 @@ async function reconcile() {
           seen.add(plate)
 
           const isEntry = lane.direction === 1
+          const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
           const existing = await VehicleSession.findOne({
             plate,
-            status: { $in: ['active', 'unpaid', 'paid'] },
-          }).sort({ entryTime: -1 })
+            entryTime: { $gte: startOfToday },
+            status: 'active',
+          })
 
           if (isEntry && !existing) {
             const eventTime = car.EnterTime || now.toISOString()

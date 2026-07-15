@@ -99,6 +99,14 @@ async function adminRoutes(app) {
       vehicleType: r.vehicleType,
     }))
   })
+  app.post('/sessions/fix-timestamps', async (req) => {
+    const { fixSessionTimestamps } = require('../scripts/fixSessionTimestamps')
+    const direction = req.body?.direction || 'subtract'
+    const result = await fixSessionTimestamps(direction)
+    logger.info(result, 'Session timestamp fix triggered')
+    return { success: true, ...result }
+  })
+
   app.post('/barrier/pay', async (req) => {
     const { plate } = req.body
     if (!plate) return { success: false, error: 'plate required' }

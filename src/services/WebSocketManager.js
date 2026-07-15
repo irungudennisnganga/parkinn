@@ -3,6 +3,7 @@ const { EventLog } = require('../models/EventLog')
 const { RawEvent } = require('../models/RawEvent')
 const { logger } = require('../utils/logger')
 const cache = require('../utils/cache')
+const { withServerDuration } = require('../utils/dateUtils')
 
 const clients = new Map()
 
@@ -61,9 +62,13 @@ async function sendActiveSessions(clientId) {
       return true
     })
 
+    withServerDuration(deduped)
+    const serverTime = deduped.length > 0 ? deduped[0].serverTime : new Date().toISOString()
+
     client.socket.send(JSON.stringify({
       type: 'active_sessions',
       data: deduped,
+      serverTime,
       timestamp: new Date().toISOString(),
     }))
   } catch (err) {
@@ -89,9 +94,13 @@ async function broadcastActiveSessions() {
     return true
   })
 
+  withServerDuration(deduped)
+  const serverTime = deduped.length > 0 ? deduped[0].serverTime : new Date().toISOString()
+
   const payload = JSON.stringify({
     type: 'active_sessions',
     data: deduped,
+    serverTime,
     timestamp: new Date().toISOString(),
   })
 
@@ -103,9 +112,12 @@ async function broadcastActiveSessions() {
 function broadcastNewSession(session) {
   cache.del(cache.CACHE_KEYS.ACTIVE_SESSIONS).catch(() => {})
 
+  withServerDuration(session)
+
   const payload = JSON.stringify({
     type: 'new_session',
     data: session,
+    serverTime: session.serverTime || new Date().toISOString(),
     timestamp: new Date().toISOString(),
   })
 
@@ -118,9 +130,12 @@ function broadcastSessionUpdate(session) {
   cache.del(cache.CACHE_KEYS.ACTIVE_SESSIONS).catch(() => {})
   cache.del(cache.CACHE_KEYS.DASHBOARD_STATS).catch(() => {})
 
+  withServerDuration(session)
+
   const payload = JSON.stringify({
     type: 'session_update',
     data: session,
+    serverTime: session.serverTime || new Date().toISOString(),
     timestamp: new Date().toISOString(),
   })
 

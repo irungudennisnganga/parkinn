@@ -63,7 +63,7 @@ async function startStaleSessionCleanup() {
   const { VehicleSession } = require('./models/VehicleSession')
   const { ParkingLot } = require('./models/ParkingLot')
   const { HikCentralClient } = require('./services/HikCentralClient')
-  const { isoLocal } = require('./utils/dateUtils')
+  const { isoLocal, hikNow } = require('./utils/dateUtils')
   const hik = new HikCentralClient()
   let firstRun = true
 
@@ -72,7 +72,7 @@ async function startStaleSessionCleanup() {
       const sessions = await VehicleSession.find({ status: 'active' }, { plate: 1 }).lean()
       if (!sessions.length) return
 
-      const now = new Date()
+      const now = hikNow()
       const lookbackMinutes = firstRun ? (now.getHours() * 60 + now.getMinutes()) : 10
       const startTime = isoLocal(new Date(now.getTime() - lookbackMinutes * 60000))
       const endTime = isoLocal(now)
@@ -151,10 +151,10 @@ async function main() {
       const { Barrier } = require('./models/Barrier')
       const { ParkingLot } = require('./models/ParkingLot')
       const { HikCentralClient } = require('./services/HikCentralClient')
-      const { isoLocal } = require('./utils/dateUtils')
+      const { isoLocal, hikNow } = require('./utils/dateUtils')
       const { broadcastActiveSessions } = require('./services/WebSocketManager')
       const hik = new HikCentralClient()
-      const now = new Date()
+      const now = hikNow()
       const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
       const startTime = isoLocal(startOfToday)
       const endTime = isoLocal(now)
@@ -211,8 +211,9 @@ async function main() {
       for (const [plate, pr] of plateRecords) {
         const existing = await VehicleSession.findOne({
           plate,
-          status: { $in: ['active', 'unpaid', 'paid'] },
-        }).sort({ entryTime: -1 })
+          entryTime: { $gte: startOfToday },
+          status: 'active',
+        })
 
         const hasActiveSession = existing?.status === 'active'
         const isKnown = registeredPlates.has(plate)

@@ -3,8 +3,9 @@ const { VehicleRecord } = require('../models/VehicleRecord')
 const { Camera } = require('../models/Camera')
 const { Area } = require('../models/Area')
 const { ParkingLot } = require('../models/ParkingLot')
-const cache = require('../utils/cache')
-const config = require('../config')
+  const cache = require('../utils/cache')
+  const config = require('../config')
+  const { withServerDuration } = require('../utils/dateUtils')
 
   async function parkingRoutes(app) {
   app.get('/daily-analytics', async (request) => {
@@ -92,7 +93,8 @@ const config = require('../config')
       const entryHour = new Date(s.entryTime).getHours()
       day.hourlyBreakdown[entryHour].entries++
 
-      if (s.status === 'paid' || s.status === 'exited') {
+      const exitStatuses = ['paid', 'exited', 'unpaid']
+      if (exitStatuses.includes(s.status)) {
         day.totalExits++
         const exitHour = s.exitTime ? new Date(s.exitTime).getHours() : entryHour
         day.hourlyBreakdown[exitHour].exits++
@@ -115,7 +117,7 @@ const config = require('../config')
         floorCountMap[entryDate][floor] = { floor, floorType: area?.areaType || 'unknown', entries: 0, exits: 0 }
       }
       floorCountMap[entryDate][floor].entries++
-      if (s.status === 'paid' || s.status === 'exited') {
+      if (exitStatuses.includes(s.status)) {
         floorCountMap[entryDate][floor].exits++
       }
     }
@@ -183,7 +185,8 @@ const config = require('../config')
       const entryHour = new Date(s.entryTime).getHours()
       hourly[entryHour].entries++
 
-      if (s.status === 'paid' || s.status === 'exited') {
+      const exitStatuses2 = ['paid', 'exited', 'unpaid']
+      if (exitStatuses2.includes(s.status)) {
         totalExits++
         const exitHour = s.exitTime ? new Date(s.exitTime).getHours() : entryHour
         hourly[exitHour].exits++
@@ -201,7 +204,7 @@ const config = require('../config')
       const floor = area?.name || 'Unknown'
       if (!floorMap[floor]) floorMap[floor] = { floor, floorType: area?.areaType || 'unknown', entries: 0, exits: 0 }
       floorMap[floor].entries++
-      if (s.status === 'paid' || s.status === 'exited') floorMap[floor].exits++
+      if (exitStatuses2.includes(s.status)) floorMap[floor].exits++
     }
 
     let peakHour = 0, maxEntries = 0
@@ -701,6 +704,8 @@ const config = require('../config')
       Area.find().lean(),
     ])
 
+    withServerDuration(sessions)
+
     const cameraMap = Object.fromEntries(cameras.map(c => [c.cameraId, c]))
     const areaMap = Object.fromEntries(areas.map(a => [a.areaId, a]))
 
@@ -732,12 +737,14 @@ const config = require('../config')
         isKnown: s.isKnown,
         chargeAmount: s.chargeAmount,
         cameraName: cam?.name || '',
+        durationMinutes: s.durationMinutes,
       })
     }
 
     return {
       floors: Object.values(floorGroups).sort((a, b) => b.vehicles.length - a.vehicles.length),
       totalActive: sessions.length,
+      serverTime: sessions.length > 0 ? sessions[0].serverTime : new Date().toISOString(),
     }
   })
 
@@ -782,7 +789,7 @@ const config = require('../config')
 
   app.get('/passageway-records', async (request, reply) => {
     const { HikCentralClient } = require('../services/HikCentralClient')
-    const { isoLocal } = require('../utils/dateUtils')
+    const { isoLocal, hikNow } = require('../utils/dateUtils')
     const hik = new HikCentralClient()
 
     const page = parseInt(request.query.page) || 1
@@ -792,7 +799,7 @@ const config = require('../config')
     const lotCode = request.query.parkingLot || ''
     const hoursBack = parseInt(request.query.hours) || 1
 
-    const now = new Date()
+    const now = hikNow()
     const startDate = new Date(now.getTime() - hoursBack * 3600000)
     const startTime = isoLocal(startDate)
     const endTime = isoLocal(now)
@@ -863,7 +870,7 @@ const config = require('../config')
 
   app.post('/create-sessions-from-passageway', async (request, reply) => {
     const { HikCentralClient } = require('../services/HikCentralClient')
-    const { isoLocal } = require('../utils/dateUtils')
+    const { isoLocal, hikNow } = require('../utils/dateUtils')
     const { processAnprEvent } = require('../services/EventProcessor')
     const { broadcastActiveSessions } = require('../services/WebSocketManager')
     const hik = new HikCentralClient()
@@ -871,7 +878,7 @@ const config = require('../config')
     const { parkingLot, hours = 1, direction: dirFilter, createOnlyNew = true } = request.body || {}
     const hoursBack = parseInt(hours) || 1
 
-    const now = new Date()
+    const now = hikNow()
     const startDate = new Date(now.getTime() - hoursBack * 3600000)
     const startTime = isoLocal(startDate)
     const endTime = isoLocal(now)

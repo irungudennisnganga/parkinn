@@ -5,7 +5,7 @@ const { HikCentralClient } = require('../services/HikCentralClient')
 const { Camera } = require('../models/Camera')
 const { ParkingLot } = require('../models/ParkingLot')
 const { logger } = require('../utils/logger')
-const { isoLocal } = require('../utils/dateUtils')
+const { isoLocal, hikNow } = require('../utils/dateUtils')
 const { broadcastNewEvent, broadcastActiveSessions, broadcastRawEvent, broadcastSessionUpdate } = require('../services/WebSocketManager')
 
 const hik = new HikCentralClient()
@@ -159,7 +159,7 @@ function extractFromStringEvent(rawString) {
 
 async function fetchPassagewayRecords(cameraName, eventTime) {
   const results = []
-  const now = new Date()
+  const now = hikNow()
   const windowStart = new Date(now.getTime() - 15 * 60000)
   const windowEnd = new Date(now.getTime() + 5 * 60000)
   const startTime = isoLocal(windowStart)
@@ -275,14 +275,17 @@ async function createSessionFromPassageway(plate) {
     const { VehicleSession } = require('../models/VehicleSession')
     const { Camera } = require('../models/Camera')
     const { Barrier } = require('../models/Barrier')
+
+    const now = hikNow()
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+
     const existing = await VehicleSession.findOne({
       plate,
-      status: { $in: ['active', 'unpaid', 'paid'] },
+      entryTime: { $gte: startOfToday },
+      status: 'active',
     })
     if (existing) return
 
-    const now = new Date()
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
     const startTime = isoLocal(startOfToday)
     const endTime = isoLocal(now)
     const lots = await ParkingLot.find().lean()
@@ -322,7 +325,7 @@ async function createSessionFromPassageway(plate) {
           }
 
           if (lane.direction === 2 && !created) {
-            const alreadyExists = await VehicleSession.findOne({ plate, status: { $in: ['active', 'unpaid', 'paid'] } })
+            const alreadyExists = await VehicleSession.findOne({ plate, entryTime: { $gte: startOfToday }, status: 'active' })
             if (!alreadyExists) {
               const entryFromRecord = car.EnterTime || null
               await VehicleSession.create({

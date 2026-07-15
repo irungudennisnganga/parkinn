@@ -81,6 +81,25 @@ function inferDirectionFromName(cameraName) {
   return null
 }
 
+function inferFloorFromName(cameraName) {
+  if (!cameraName) return null
+  const match = cameraName.match(/(\d+)(?:st|nd|rd|th)?\s*Floor/i)
+  if (match) return parseInt(match[1])
+  const gndMatch = cameraName.match(/(?:GND|Ground|Basement)\s*Floor/i)
+  if (gndMatch) return 0
+  return null
+}
+
+function getFloorFromCamera(cam) {
+  if (!cam) return null
+  const name = cam.name || ''
+  const match = name.match(/(\d+)(?:st|nd|rd|th)?\s*Floor/i)
+  if (match) return parseInt(match[1])
+  const gndMatch = name.match(/(?:GND|Ground|Basement)\s*Floor/i)
+  if (gndMatch) return 0
+  return null
+}
+
 async function resolveDirection(cameraId, cameraName) {
   let direction = null
 
@@ -115,7 +134,12 @@ async function isInternalFloorCamera(cameraId) {
   const cam = await Camera.findOne({
     $or: [{ cameraId }, { indexCode: cameraId }],
   })
-  if (!cam || !cam.areaId) return false
+  if (!cam) return false
+
+  const nameFloor = getFloorFromCamera(cam)
+  if (nameFloor !== null) return nameFloor > 1
+
+  if (!cam.areaId) return false
   const area = await Area.findOne({ areaId: cam.areaId })
   if (!area) return false
 
@@ -150,6 +174,9 @@ async function isBuildingExitCamera(cameraId) {
   })
   if (!cam) return false
   if (cam.direction !== 'exit' && cam.direction !== 'both') return false
+
+  const nameFloor = getFloorFromCamera(cam)
+  if (nameFloor !== null) return nameFloor <= 1
 
   const { Area } = require('../models/Area')
   if (!cam.areaId) return true
@@ -272,6 +299,12 @@ async function handleEntry(event, plate, cameraId, eventTime) {
   const barrierId = barrier?.barrierId || cameraId
 
   try {
+    const today = new Date(entryDate.getFullYear(), entryDate.getMonth(), entryDate.getDate())
+    await VehicleSession.updateMany(
+      { plate, entryTime: { $gte: today, $lt: entryDate }, status: { $in: ['unpaid', 'active'] } },
+      { $set: { status: 'exited', exitTime: entryDate } },
+    )
+
     const floorInfo = await getCameraFloorInfo(cameraId)
     const session = await VehicleSession.create({
       plate,
@@ -435,6 +468,13 @@ async function handleExit(event, plate, cameraId, eventTime) {
   session.status = 'unpaid'
   session.exitTime = exitDate
   session.exitCamera = cameraId
+
+  const today = new Date(exitDate.getFullYear(), exitDate.getMonth(), exitDate.getDate())
+  await VehicleSession.updateMany(
+    { plate, _id: { $ne: session._id }, entryTime: { $gte: today }, status: { $in: ['unpaid', 'active'] } },
+    { $set: { status: 'exited', exitTime: exitDate } },
+  )
+
   await session.save()
   logger.info({ plate, charge: charge.amount, source: charge.source || 'local' }, 'Unpaid vehicle — barrier stays closed, payment required')
   broadcastSessionUpdate(session)

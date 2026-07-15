@@ -9,22 +9,22 @@ const { openBarrierByCamera, findBarrierForCamera } = require('../services/Barri
 const { HikCentralClient } = require('../services/HikCentralClient')
 const { broadcastSessionUpdate } = require('../services/WebSocketManager')
 const { logger } = require('../utils/logger')
-const { isoLocal } = require('../utils/dateUtils')
+const { isoLocal, hikNow } = require('../utils/dateUtils')
 
 const hik = new HikCentralClient()
 
 async function paymentRoutes(app) {
   app.get('/fee/:plate', async (request, reply) => {
     const plate = request.params.plate.toUpperCase()
-    let session = await VehicleSession.findOne({ plate, status: { $in: ['active', 'unpaid'] } })
+    let session = await VehicleSession.findOne({ plate, status: 'unpaid' })
       .sort({ entryTime: -1 })
     if (!session) {
-      session = await VehicleSession.findOne({ plate, status: 'unpaid' })
+      session = await VehicleSession.findOne({ plate, status: 'active' })
         .sort({ entryTime: -1 })
     }
 
     if (!session) {
-      const now = new Date()
+      const now = hikNow()
       const startTime = isoLocal(new Date(now.getTime() - 24 * 3600000))
       const endTime = isoLocal(now)
       const lots = await ParkingLot.find().lean()
@@ -90,7 +90,12 @@ async function paymentRoutes(app) {
       return reply.status(400).send({ error: 'Plate number required' })
     }
 
-    const session = await VehicleSession.findOne({ plate: plate.toUpperCase(), status: { $in: ['active', 'unpaid'] } })
+    let session = await VehicleSession.findOne({ plate: plate.toUpperCase(), status: 'unpaid' })
+      .sort({ entryTime: -1 })
+    if (!session) {
+      session = await VehicleSession.findOne({ plate: plate.toUpperCase(), status: 'active' })
+        .sort({ entryTime: -1 })
+    }
     if (!session) {
       return reply.status(404).send({ error: 'No active session found for this plate' })
     }
@@ -158,7 +163,12 @@ async function paymentRoutes(app) {
       return reply.status(400).send({ error: 'plate required' })
     }
 
-    const session = await VehicleSession.findOne({ plate, status: { $in: ['active', 'unpaid'] } })
+    let session = await VehicleSession.findOne({ plate, status: 'unpaid' })
+      .sort({ entryTime: -1 })
+    if (!session) {
+      session = await VehicleSession.findOne({ plate, status: 'active' })
+        .sort({ entryTime: -1 })
+    }
     if (!session) {
       return reply.status(404).send({ error: 'No active/unpaid session found for this plate' })
     }

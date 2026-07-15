@@ -40,36 +40,37 @@ async function mpesaRoutes(app) {
       }
 
       const session = await VehicleSession.findOne({ plate: plate.toUpperCase(), status: 'paid' })
+        .sort({ entryTime: -1 })
       const feeToConfirm = session?.chargeAmount || 0
 
-      // Step 1: Try parkingfee/confirm (HikCentral handles barrier automatically)
+      // Step 1: Confirm payment on HikCentral (don't open barrier — car drives to exit camera)
       try {
-        const confirm = await hik.confirmParkingFee(plate.toUpperCase(), feeToConfirm, 1)
+        const confirm = await hik.confirmParkingFee(plate.toUpperCase(), feeToConfirm, 0)
         logger.info({ plate, fee: feeToConfirm, confirm }, 'Parking fee confirm after M-Pesa')
         if (confirm?.code === '0') {
-          session.exitTime = new Date()
-          session.status = 'exited'
+          session.status = 'paid'
           await session.save()
           broadcastSessionUpdate(session)
-          logger.info({ plate, amount, fee: feeToConfirm }, 'Payment reconciled, barrier opened via HikCentral confirm')
+          logger.info({ plate, amount, fee: feeToConfirm }, 'Payment confirmed — car exits on next ANPR detection')
           return reply.status(200).send({ ResultCode: 0, ResultDesc: 'Success' })
         }
       } catch (err) {
         logger.warn({ plate, err: err.message }, 'Parking fee confirm failed, falling back to direct barrier control')
       }
 
-      // Step 2: Fallback to camera-based barrier open
+      // Step 2: Fallback — open barrier directly
       const cameraId = session?.exitCamera || session?.entryCamera
       if (session && cameraId) {
         await openBarrierByCamera(cameraId)
-        session.exitTime = new Date()
-        session.status = 'exited'
-        if (!session.exitCamera) session.exitCamera = cameraId
+        session.status = 'paid'
         await session.save()
         broadcastSessionUpdate(session)
-        logger.info({ plate, amount, fee: feeToConfirm }, 'Payment reconciled, barrier opened via fallback')
+        logger.info({ plate, amount, fee: feeToConfirm }, 'Payment confirmed, barrier opened via fallback')
       } else if (session) {
-        logger.info({ plate, amount, fee: feeToConfirm }, 'Payment reconciled — exit on next ANPR detection')
+        session.status = 'paid'
+        await session.save()
+        broadcastSessionUpdate(session)
+        logger.info({ plate, amount, fee: feeToConfirm }, 'Payment confirmed — exit on next ANPR detection')
       }
 
       return reply.status(200).send({ ResultCode: 0, ResultDesc: 'Success' })

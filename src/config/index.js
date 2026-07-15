@@ -18,6 +18,7 @@ module.exports = {
     secretKey: process.env.HIK_SECRET_KEY || '',
     callbackUrl: process.env.HIKCENTRAL_CALLBACK_URL || process.env.MPESA_CALLBACK_URL || '',
     tokenExpiryDays: 7,
+    timeOffsetMs: parseInt(process.env.HIKCENTRAL_TIME_OFFSET_MINUTES || '0', 10) * 60 * 1000,
   },
 
   mpesa: {

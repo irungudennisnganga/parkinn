@@ -1,4 +1,5 @@
 const crypto = require('crypto')
+const https = require('https')
 const axios = require('axios')
 const config = require('../config')
 const { logger } = require('../utils/logger')
@@ -10,6 +11,9 @@ class HikCentralClient {
     this.client = axios.create({
       baseURL: config.hikcentral.baseUrl,
       timeout: 30000,
+      ...(config.hikcentral.insecure
+        ? { httpsAgent: new https.Agent({ rejectUnauthorized: false }) }
+        : {}),
     })
   }
 

@@ -18,6 +18,7 @@ const { syncResources, setupWebhook } = require('./services/ResourceSync')
 const { setupWebSocket } = require('./services/WebSocketManager')
 const { startPassagewaySync } = require('./services/PassagewaySync')
 const { jwtAuth } = require('./middleware/jwtAuth')
+const { seedAdmin } = require('./scripts/seedAdmin')
 
 async function createApp() {
   const app = Fastify({
@@ -36,6 +37,7 @@ async function createApp() {
   })
   await app.register(websocketPlugin)
   await connectMongo()
+  await seedAdmin()
 
   const wsManager = setupWebSocket(app)
 

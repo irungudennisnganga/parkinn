@@ -17,6 +17,7 @@ module.exports = {
     accessKey: process.env.HIK_ACCESS_KEY || '',
     secretKey: process.env.HIK_SECRET_KEY || '',
     callbackUrl: process.env.HIKCENTRAL_CALLBACK_URL || process.env.MPESA_CALLBACK_URL || '',
+    insecure: process.env.HIK_INSECURE !== 'false',
     tokenExpiryDays: 7,
     timeOffsetMs: parseInt(process.env.HIKCENTRAL_TIME_OFFSET_MINUTES || '0', 10) * 60 * 1000,
   },
@@ -48,5 +49,11 @@ module.exports = {
   floors: {
     residential: (process.env.RESIDENTIAL_FLOORS || '5,6,7,8,9').split(',').map(Number),
     commercial: (process.env.COMMERCIAL_FLOORS || '1,2,3,4').split(',').map(Number),
+  },
+
+  defaultAdmin: {
+    email: process.env.DEFAULT_ADMIN_EMAIL || 'hob@swanfacilities.com',
+    password: process.env.DEFAULT_ADMIN_PASSWORD || '12345678',
+    fullName: process.env.DEFAULT_ADMIN_FULL_NAME || 'Administrator',
   },
 }

@@ -21,6 +21,7 @@ module.exports = {
     insecure: process.env.HIK_INSECURE !== 'false',
     tokenExpiryDays: 7,
     timeOffsetMs: parseInt(process.env.HIKCENTRAL_TIME_OFFSET_MINUTES || '0', 10) * 60 * 1000,
+    queryBufferMs: parseInt(process.env.HIKCENTRAL_QUERY_BUFFER_MINUTES || '120', 10) * 60 * 1000,
   },
 
   mpesa: {

@@ -121,7 +121,7 @@ async function startStaleSessionCleanup() {
     }
   }
 
-  check()
+  await check()
   setInterval(check, config.reconciliation.cleanupIntervalMs)
 }
 
@@ -144,8 +144,6 @@ async function main() {
     } catch (err) {
       logger.warn({ err: err.message }, 'Startup initialization had issues')
     }
-
-    startStaleSessionCleanup()
 
     try {
       const { VehicleSession } = require('./models/VehicleSession')
@@ -294,6 +292,7 @@ async function main() {
       logger.warn({ err: err.message }, 'Startup passageway reconciliation failed')
     }
 
+    await startStaleSessionCleanup()
     startPassagewaySync()
   } catch (err) {
     logger.error(err, 'Failed to start server')

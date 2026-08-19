@@ -29,7 +29,8 @@ async function createApp() {
 
   await app.register(cors, {
     origin: (origin, cb) => {
-      cb(null, true)
+      if (!origin || config.corsOrigins.includes(origin)) cb(null, true)
+      else cb(new Error('Not allowed by CORS'))
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     credentials: true,

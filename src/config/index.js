@@ -2,6 +2,7 @@ require('dotenv').config()
 
 module.exports = {
   port: parseInt(process.env.PORT || '3000', 10),
+  corsOrigins: (process.env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean),
 
   mongodb: {
     uri: process.env.MONGODB_URI || 'mongodb://localhost:27017/parking_altura',

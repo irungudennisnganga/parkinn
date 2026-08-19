@@ -5,7 +5,7 @@ const { HikCentralClient } = require('../services/HikCentralClient')
 const { Camera } = require('../models/Camera')
 const { ParkingLot } = require('../models/ParkingLot')
 const { logger } = require('../utils/logger')
-const { isoLocal, hikNow } = require('../utils/dateUtils')
+const { isoLocal, hikNow, hikQueryEnd } = require('../utils/dateUtils')
 const { broadcastNewEvent, broadcastActiveSessions, broadcastRawEvent, broadcastSessionUpdate } = require('../services/WebSocketManager')
 
 const hik = new HikCentralClient()
@@ -161,7 +161,7 @@ async function fetchPassagewayRecords(cameraName, eventTime) {
   const results = []
   const now = hikNow()
   const windowStart = new Date(now.getTime() - 15 * 60000)
-  const windowEnd = new Date(now.getTime() + 5 * 60000)
+  const windowEnd = hikQueryEnd()
   const startTime = isoLocal(windowStart)
   const endTime = isoLocal(windowEnd)
 

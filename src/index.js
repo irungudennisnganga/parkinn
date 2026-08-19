@@ -66,7 +66,7 @@ async function startStaleSessionCleanup() {
   const { VehicleSession } = require('./models/VehicleSession')
   const { ParkingLot } = require('./models/ParkingLot')
   const { HikCentralClient } = require('./services/HikCentralClient')
-  const { isoLocal, hikNow } = require('./utils/dateUtils')
+  const { isoLocal, hikNow, hikQueryEnd } = require('./utils/dateUtils')
   const hik = new HikCentralClient()
   let firstRun = true
 
@@ -76,9 +76,10 @@ async function startStaleSessionCleanup() {
       if (!sessions.length) return
 
       const now = hikNow()
+      const queryEnd = hikQueryEnd()
       const lookbackMinutes = firstRun ? (now.getHours() * 60 + now.getMinutes()) : 10
       const startTime = isoLocal(new Date(now.getTime() - lookbackMinutes * 60000))
-      const endTime = isoLocal(now)
+      const endTime = isoLocal(queryEnd)
       const lots = await ParkingLot.find().lean()
 
       let closedCount = 0
@@ -152,13 +153,14 @@ async function main() {
       const { Barrier } = require('./models/Barrier')
       const { ParkingLot } = require('./models/ParkingLot')
       const { HikCentralClient } = require('./services/HikCentralClient')
-      const { isoLocal, hikNow } = require('./utils/dateUtils')
+      const { isoLocal, hikNow, hikQueryEnd } = require('./utils/dateUtils')
       const { broadcastActiveSessions } = require('./services/WebSocketManager')
       const hik = new HikCentralClient()
       const now = hikNow()
+      const queryEnd = hikQueryEnd()
       const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
       const startTime = isoLocal(startOfToday)
-      const endTime = isoLocal(now)
+      const endTime = isoLocal(queryEnd)
       const lots = await ParkingLot.find().lean()
       const registeredPlates = new Set(
         (await RegisteredVehicle.find({ isActive: true }, { plate: 1 }).lean()).map(r => r.plate),
@@ -232,12 +234,18 @@ async function main() {
               exitCamera: pr.exit ? pr.exit.cameraId : undefined,
             })
             created++
-            logger.info({ plate, isKnown, hasExit: !!pr.exit }, 'Startup sync: session created')
+            logger.info({ plate, isKnown, hasExit: !!pr.exit, entryTime: pr.entry.enterTime }, 'Startup sync: session created')
           } catch (e) {
             if (e.code !== 11000) {
               logger.warn({ plate, err: e.message }, 'Startup sync: session creation failed')
+            } else {
+              logger.info({ plate }, 'Startup sync: session already exists (duplicate)')
             }
           }
+        } else if (existing) {
+          logger.info({ plate, sessionId: existing._id, status: existing.status }, 'Startup sync: session already exists, skipped')
+        } else if (!pr.entry) {
+          logger.warn({ plate, hasExit: !!pr.exit }, 'Startup sync: no entry record found')
         }
 
         if (!existing && !pr.entry && pr.exit) {

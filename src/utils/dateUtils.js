@@ -32,6 +32,12 @@ function hikNow() {
   return offset ? new Date(Date.now() + offset) : new Date()
 }
 
+function hikQueryEnd() {
+  const config = require('../config')
+  const bufferMs = config?.hikcentral?.queryBufferMs || 120 * 60 * 1000
+  return new Date(hikNow().getTime() + bufferMs)
+}
+
 function toLocalTime(dateOrString) {
   const config = require('../config')
   const offset = config?.hikcentral?.timeOffsetMs || 0
@@ -52,4 +58,4 @@ function withServerDuration(sessions) {
   return sessions
 }
 
-module.exports = { minutesBetween, hoursBetween, now, addDays, isoLocal, hikNow, toLocalTime, withServerDuration }
+module.exports = { minutesBetween, hoursBetween, now, addDays, isoLocal, hikNow, hikQueryEnd, toLocalTime, withServerDuration }

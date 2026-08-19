@@ -4,8 +4,8 @@
   "description": "HikCentral integration for parking management with M-Pesa payments",
   "main": "src/index.js",
   "scripts": {
-    "dev": "nodemon src/index.js",
-    "start": "node src/index.js",
+    "dev": "TZ=Africa/Nairobi nodemon src/index.js",
+    "start": "TZ=Africa/Nairobi node src/index.js",
     "test": "jest --runInBand --forceExit"
   },
   "jest": {

@@ -2,14 +2,13 @@ const { VehicleSession } = require('../models/VehicleSession')
 const { ParkingLot } = require('../models/ParkingLot')
 const { HikCentralClient } = require('./HikCentralClient')
 const { logger } = require('../utils/logger')
-const { isoLocal, hikNow } = require('../utils/dateUtils')
+const { isoLocal, hikNow, hikQueryEnd } = require('../utils/dateUtils')
 const { processAnprEvent } = require('./EventProcessor')
 const { broadcastActiveSessions, broadcastSessionUpdate } = require('./WebSocketManager')
 const config = require('../config')
 
 const RECONCILE_INTERVAL_MS = 1 * 60 * 1000
 const LOOKBACK_MINUTES = 2
-const STARTUP_LOOKBACK_MINUTES = 30
 
 let timer = null
 let running = false
@@ -22,12 +21,13 @@ async function reconcile() {
   try {
     const hik = new HikCentralClient()
     const now = hikNow()
+    const queryEnd = hikQueryEnd()
     const localNow = new Date()
     const lookback = lastRun
       ? Math.max(LOOKBACK_MINUTES, (localNow - lastRun) / 60000 + 1)
-      : STARTUP_LOOKBACK_MINUTES
+      : (now.getHours() * 60 + now.getMinutes())
     const startTime = isoLocal(new Date(now.getTime() - lookback * 60000))
-    const endTime = isoLocal(now)
+    const endTime = isoLocal(queryEnd)
 
     const lots = await ParkingLot.find().lean()
     if (!lots.length) return

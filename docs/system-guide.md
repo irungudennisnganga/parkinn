@@ -101,17 +101,36 @@ Runs once when the server starts. Catches cars that:
 ```
 Server starts → after listen + resource sync
     ↓
-Startup reconciliation (non-blocking):
+Startup reconciliation:
     ├── Fetches all parking lots from DB
-    ├── Queries HikCentral passageway API (start of today → now)
+    ├── Queries HikCentral passageway API (midnight → now + 2h buffer)
     ├── For each record:
     │   ├── Maps laneIndexCode → Camera → Barrier
-    │   ├── Checks existing session (active/unpaid/paid)
+    │   ├── Checks existing session (active)
     │   ├── Entry record + no session → creates session (status: "active")
+    │   ├── Entry + exit record + no session → creates session (status: "unpaid")
     │   └── Exit record + active session → closes as "unpaid"
     ├── Deduplicates by plate
+    ├── Logs each plate's processing status for debugging
     └── Broadcasts via WebSocket
+    ↓
+await startStaleSessionCleanup()   ← runs AFTER reconciliation (no race)
+    ↓
+startPassagewaySync()              ← ongoing 1-min reconciliation
 ```
+
+### Query time windows
+
+All HikCentral queries use a **forward buffer** (`HIKCENTRAL_QUERY_BUFFER_MINUTES`,
+default 120 min) to account for clock drift on the HikCentral device:
+
+| Phase | Start | End |
+|-------|-------|-----|
+| Startup reconciliation | Midnight (local) | `now + buffer` |
+| PassagewaySync (first run) | Full day back | `now + buffer` |
+| PassagewaySync (periodic) | Last run or 2 min | `now + buffer` |
+| Stale cleanup (first run) | Full day back | `now + buffer` |
+| Stale cleanup (periodic) | 10 min back | `now + buffer` |
 
 ### Why session is closed as "unpaid" not "exited"
 
@@ -165,6 +184,26 @@ Multiple layers prevent duplicate sessions:
 |------|------|
 | `src/routes/events.js` | Webhook receiver, event extraction, reactive fallback |
 | `src/services/EventProcessor.js` | Core event processing: handleEntry, handleExit, direction resolution |
-| `src/index.js` | Startup reconciliation |
+| `src/index.js` | Startup reconciliation + stale session cleanup |
+| `src/services/PassagewaySync.js` | Ongoing 1-min reconciliation (full day on startup) |
+| `src/utils/dateUtils.js` | `hikNow()`, `hikQueryEnd()`, `isoLocal()` — time helpers |
+| `src/config/index.js` | Config: `queryBufferMs`, `timeOffsetMs`, `TZ` |
 | `src/models/VehicleSession.js` | Session schema with unique index |
 | `src/services/WebSocketManager.js` | Real-time broadcasts to frontend |
+
+---
+
+## Timezone & Clock Drift
+
+The system accounts for clock drift between the server and HikCentral device:
+
+- **`TZ=Africa/Nairobi`** — must be set before Node.js starts (in shell, systemd, or npm script)
+- **`HIKCENTRAL_TIME_OFFSET_MINUTES`** — fixed offset applied to `hikNow()` if the HikCentral clock is consistently ahead/behind
+- **`HIKCENTRAL_QUERY_BUFFER_MINUTES`** — extends query endTime forward (default 120 min) to capture all records even with clock drift
+
+```
+Server clock:     ────────|──── now
+HikCentral clock: ───────────|──── now (ahead)
+Query window:     ──────────────────|──── endTime = now + buffer
+                                     ↑ ensures HikCentral records are within range
+```
